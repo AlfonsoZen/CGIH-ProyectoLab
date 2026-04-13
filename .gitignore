@@ -1,0 +1,28 @@
+# Binaries
+duck_hunt_3d
+*.exe
+*.out
+*.app
+
+# Objects and Libraries
+*.o
+*.a
+*.so
+*.lib
+*.dll
+
+# Logs and Temp files
+*.log
+output.log
+.cache/
+*.tmp
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
