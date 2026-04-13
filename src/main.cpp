@@ -145,8 +145,10 @@ int main()
 	Shader lightingShader("shaders/default.vert", "shaders/default.frag");
 	Shader lampShader("shaders/lamp.vert", "shaders/lamp.frag");
 	
-	Model Dog((char*)"assets/models/ball.obj");
+	Model Dog((char*)"assets/models/Dog_Laugh1.glb");
 	Model Piso((char*)"assets/models/piso.obj");
+	Model Duck((char*)"assets/models/Duck_Flyrect1.glb");
+	Model StartText((char*)"assets/models/StartGameText.002.glb");
 
 	// First, set the container's VAO (and VBO)
 	GLuint VBO, VAO;
@@ -280,11 +282,32 @@ int main()
 		Piso.Draw(lightingShader);
 
 		model = glm::mat4(1);
+		model = glm::scale(model, glm::vec3(10.0f, 10.0f, 10.0f));
 		glEnable(GL_BLEND);//Avtiva la funcionalidad para trabajar el canal alfa
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 		glUniform1i(glGetUniformLocation(lightingShader.Program, "transparency"), 1);
+		// Color café para el perro
+		glUniform3f(glGetUniformLocation(lightingShader.Program, "baseColor"), 0.54f, 0.27f, 0.07f);
 	    Dog.Draw(lightingShader);
+
+		// Renderizar el Pato
+		model = glm::mat4(1);
+		model = glm::translate(model, glm::vec3(1.5f, 1.5f, 0.0f)); // Entre las luces
+		model = glm::scale(model, glm::vec3(15.0f, 15.0f, 15.0f)); // Pájaro aún más grande
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+		glUniform3f(glGetUniformLocation(lightingShader.Program, "baseColor"), 0.0f, 0.5f, 0.0f); // Verde
+		Duck.Draw(lightingShader);
+
+		// Renderizar el Texto de Inicio
+		model = glm::mat4(1);
+		model = glm::translate(model, glm::vec3(0.0f, 1.0f, 0.0f)); 
+		model = glm::scale(model, glm::vec3(1500.0f, 1500.0f, 1500.0f)); 
+		// Quitamos la rotación de 180 que lo dejaba en reversa
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+		glUniform3f(glGetUniformLocation(lightingShader.Program, "baseColor"), 1.0f, 1.0f, 0.0f); // Amarillo
+		StartText.Draw(lightingShader);
+
 		glDisable(GL_BLEND);  //Desactiva el canal alfa 
 		glBindVertexArray(0);
 
