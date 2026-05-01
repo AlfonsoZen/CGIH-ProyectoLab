@@ -9,6 +9,7 @@
 
 // Other Libs
 #include "../lib/SOIL2/SOIL2.h"
+#include "../lib/stb_image.h"
 
 // GLM Mathematics
 #include <glm/glm.hpp>
@@ -26,7 +27,7 @@ void MouseCallback(GLFWwindow *window, double xPos, double yPos);
 void DoMovement();
 
 // Window dimensions
-const GLuint WIDTH = 1280, HEIGHT = 720;
+const GLuint WIDTH = 1600, HEIGHT = 900;
 int SCREEN_WIDTH, SCREEN_HEIGHT;
 
 // Camera
@@ -35,6 +36,21 @@ GLfloat lastX = WIDTH / 2.0;
 GLfloat lastY = HEIGHT / 2.0;
 bool keys[1024];
 bool firstMouse = true;
+
+// Crosshair vertices
+
+float crosshairVertices[] = {
+	// (x, y, z) - (u,v)
+	
+	-0.05f,  0.05f, -0.1f,     0.0f, 1.0f,
+    -0.05f, -0.05f, -0.1f,     0.0f, 0.0f,
+    0.05f, -0.05f, -0.1f,     1.0f, 0.0f,
+
+    -0.05f,  0.05f, -0.1f,     0.0f, 1.0f,
+    0.05f, -0.05f, -0.1f,     1.0f, 0.0f,
+    0.05f,  0.05f, -0.1f,     1.0f, 1.0f
+
+};
 
 // Deltatime
 GLfloat deltaTime = 0.0f;	// Time between current frame and last frame
@@ -72,7 +88,7 @@ int main()
 	glfwSetCursorPosCallback(window, MouseCallback);
 
 	// GLFW Options
-	//glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
 	// Set this to true so GLEW knows to use a modern approach to retrieving function pointers and extensions
 	glewExperimental = GL_TRUE;
@@ -86,6 +102,25 @@ int main()
 	// Define the viewport dimensions
 	glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
+	// Buffers
+
+	GLuint VAO, crosshairVBO;
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &crosshairVBO);
+
+	glBindVertexArray(VAO);
+	glBindBuffer(GL_ARRAY_BUFFER, crosshairVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(crosshairVertices), crosshairVertices, GL_STATIC_DRAW);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0);
+
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(2);
+
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+
 	// OpenGL options
 	glEnable(GL_DEPTH_TEST);
 
@@ -95,6 +130,36 @@ int main()
 	// Import models
 	Model Skybox((char*)"assets/models/Skybox.obj");
 	Model Piso((char*)"assets/models/piso.obj");
+	Model Gun((char*)"assets/models/zapper.obj");
+
+	// Import textures
+
+	GLuint crosshairTexture;
+	glGenTextures(1, &crosshairTexture);
+	glBindTexture(GL_TEXTURE_2D, crosshairTexture);
+
+	// Parámetros de textura
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	int textureWidth, textureHeight, nrChannels;
+	stbi_set_flip_vertically_on_load(true); 
+	unsigned char *image = stbi_load("assets/textures/crosshair.png", &textureWidth, &textureHeight, &nrChannels, STBI_rgb_alpha);
+	
+	if (!image) {
+    	std::cout << "FAILED: " << stbi_failure_reason() << std::endl;
+	}
+
+	if (image) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
+		glGenerateMipmap(GL_TEXTURE_2D);
+		stbi_image_free(image);
+	} else {
+		std::cout << "Failed to load texture" << std::endl;
+	}
+	glBindTexture(GL_TEXTURE_2D, 0);
 
 	// Define the projection 
 	glm::mat4 projection = glm::perspective( glm::radians(camera.GetZoom()), ( float )SCREEN_WIDTH/( float )SCREEN_HEIGHT, 0.1f, 1000.0f );
@@ -116,7 +181,6 @@ int main()
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 		//Load Skybox
-
 		shader.Use();
 
 		glDepthMask(GL_FALSE);
@@ -125,7 +189,7 @@ int main()
 		glm::mat4 model(1);
 		glm::mat4 skyboxView = glm::mat4(glm::mat3(camera.GetViewMatrix()));
 
-		model = glm::scale(model, glm::vec3(20.0f));
+		model = glm::scale(model, glm::vec3(2.0f));
 
 		glUniformMatrix4fv(glGetUniformLocation(shader.Program, "model"), 1, GL_FALSE, glm::value_ptr(model));
 		glUniformMatrix4fv(glGetUniformLocation(shader.Program, "view"), 1, GL_FALSE, glm::value_ptr(skyboxView));
@@ -141,7 +205,6 @@ int main()
         glUniformMatrix4fv(glGetUniformLocation(shader.Program, "view"), 1, GL_FALSE, glm::value_ptr(view));
 
 		// Floor
-
 		model = glm::mat4(1);
 		
 		model = glm::translate(model, glm::vec3(0.0f, -1.0f, 0.0f));
@@ -154,13 +217,48 @@ int main()
 
 		glUniform1f(glGetUniformLocation(shader.Program, "uvScale"), 1.0f);
 
-		
+		// Gun
+		model = glm::mat4(1);
 
+		glClear(GL_DEPTH_BUFFER_BIT);
 
+		view = glm::mat4(1);
+        glUniformMatrix4fv(glGetUniformLocation(shader.Program, "view"), 1, GL_FALSE, glm::value_ptr(view));
 
+		model = glm::translate(model, glm::vec3(0.5f,-0.8f,-1.0f));
+		model = glm::rotate(model, glm::radians(180.0f),glm::vec3(0.0f,1.0f,0.0f));
+		model = glm::scale(model, glm::vec3(0.3f, 0.3f, 0.3f));
+		glUniformMatrix4fv(glGetUniformLocation(shader.Program, "model"), 1, GL_FALSE, glm::value_ptr(model));
+
+		Gun.Draw(shader);
+
+		// Crosshair (es lo último que se dibuja)
+
+		glDisable(GL_DEPTH_TEST);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+		GLint modelLoc = glGetUniformLocation(shader.Program, "model");
+		GLint viewLoc  = glGetUniformLocation(shader.Program, "view");
+		GLint projLoc  = glGetUniformLocation(shader.Program, "projection");
+
+		glm::mat4 identity = glm::mat4(1.0f); 
+		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(identity));
+		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(identity));
+		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(identity));
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, crosshairTexture);
+		glUniform1i(glGetUniformLocation(shader.Program, "ourTexture"), 0);
+
+		glBindVertexArray(VAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		glDisable(GL_BLEND);
+		glEnable(GL_DEPTH_TEST);
 
 		// Stuff ---
-
 
 		glBindVertexArray(0);
 
