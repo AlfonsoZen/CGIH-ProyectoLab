@@ -26,6 +26,4 @@ output.log
 # OS specific
 .DS_Store
 Thumbs.db
-*.sh
-Dockerfile
 
