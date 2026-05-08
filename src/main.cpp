@@ -27,13 +27,12 @@ void MouseCallback(GLFWwindow *window, double xPos, double yPos);
 void DoMovement();
 
 // Window dimensions
-const GLuint WIDTH = 1600, HEIGHT = 900;
 int SCREEN_WIDTH, SCREEN_HEIGHT;
 
 // Camera
 Camera  camera(glm::vec3(0.0f, 0.0f, 3.0f));
-GLfloat lastX = WIDTH / 2.0;
-GLfloat lastY = HEIGHT / 2.0;
+GLfloat lastX = 0.0f;
+GLfloat lastY = 0.0f;
 bool keys[1024];
 bool firstMouse = true;
 
@@ -56,6 +55,13 @@ float crosshairVertices[] = {
 GLfloat deltaTime = 0.0f;	// Time between current frame and last frame
 GLfloat lastFrame = 0.0f;  	// Time of last frame
 
+//Physics
+GLfloat velocityY = 0.0f;
+GLfloat gravity = -30.0f;
+GLfloat jumpForce = 12.0f;    
+GLfloat groundHeight = 1.0f; 
+bool isGrounded = true;
+
 int main()
 {
 	// Init GLFW
@@ -68,8 +74,12 @@ int main()
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
 
+	GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+	const GLFWvidmode* mode = glfwGetVideoMode(primaryMonitor);
+	glfwWindowHint(GLFW_DECORATED, GL_FALSE);
+
 	// Create a GLFWwindow object that we can use for GLFW's functions
-	GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Duck Hunt 3D", nullptr, nullptr);
+	GLFWwindow* window = glfwCreateWindow(mode->width, mode->height, "Duck Hunt 3D", nullptr, nullptr);
 
 	if (nullptr == window)
 	{
@@ -172,6 +182,18 @@ int main()
 		deltaTime = currentFrame - lastFrame;
 		lastFrame = currentFrame;
 
+		// Jump logic
+		velocityY += gravity * deltaTime;
+
+		camera.position.y += velocityY * deltaTime;
+
+		if (camera.position.y <= groundHeight)
+		{
+			camera.position.y = groundHeight;
+			velocityY = 0.0f;                 
+			isGrounded = true;                
+		}
+
 		// Check if any events have been activiated (key pressed, mouse moved etc.) and call corresponding response functions
 		glfwPollEvents();
 		DoMovement();
@@ -235,28 +257,33 @@ int main()
 		// Crosshair (es lo último que se dibuja)
 
 		glDisable(GL_DEPTH_TEST);
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		GLint modelLoc = glGetUniformLocation(shader.Program, "model");
-		GLint viewLoc  = glGetUniformLocation(shader.Program, "view");
-		GLint projLoc  = glGetUniformLocation(shader.Program, "projection");
+        GLint modelLoc = glGetUniformLocation(shader.Program, "model");
+        GLint viewLoc  = glGetUniformLocation(shader.Program, "view");
+        GLint projLoc  = glGetUniformLocation(shader.Program, "projection");
 
-		glm::mat4 identity = glm::mat4(1.0f); 
-		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(identity));
-		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(identity));
-		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(identity));
+        glm::mat4 identity = glm::mat4(1.0f); 
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(identity));
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(identity));
 
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, crosshairTexture);
-		glUniform1i(glGetUniformLocation(shader.Program, "ourTexture"), 0);
+        float aspectRatio = (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT;
+        glm::mat4 crosshairModel = glm::mat4(1.0f);
+        crosshairModel = glm::scale(crosshairModel, glm::vec3(1.0f / aspectRatio, 1.0f, 1.0f));
 
-		glBindVertexArray(VAO);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		glBindVertexArray(0);
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(crosshairModel));
 
-		glDisable(GL_BLEND);
-		glEnable(GL_DEPTH_TEST);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, crosshairTexture);
+        glUniform1i(glGetUniformLocation(shader.Program, "ourTexture"), 0);
+
+        glBindVertexArray(VAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindVertexArray(0);
+
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
 
 		// Stuff ---
 
@@ -295,6 +322,12 @@ void DoMovement()
 	{
 		camera.ProcessKeyboard(RIGHT, deltaTime);
 	}
+	if (keys[GLFW_KEY_SPACE] && isGrounded)
+	{
+		velocityY = jumpForce; // Disparar al personaje hacia arriba
+    	isGrounded = false;    // Ya no está en el suelo
+	}
+
 }
 
 void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mode)

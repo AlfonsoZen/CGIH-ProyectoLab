@@ -51,7 +51,7 @@ public:
     glm::vec3 GetPosition();
     glm::vec3 GetFront();
 
-private:
+public:
     // Camera Attributes
     glm::vec3 position;
     glm::vec3 front;
