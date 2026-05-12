@@ -1,5 +1,7 @@
 #include <iostream>
 #include <cmath>
+#include <vector>
+#include <array>
 
 // GLEW
 #include <GL/glew.h>
@@ -20,6 +22,7 @@
 #include "shader.h"
 #include "camera.h"
 #include "model.h"
+#include "modelAnim.h"
 
 // Function prototypes
 void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mode);
@@ -33,6 +36,20 @@ Camera  camera(glm::vec3(0.0f, 0.0f, 3.0f));
 GLfloat lastX = 0.0f;
 GLfloat lastY = 0.0f;
 bool keys[1024];
+
+// ---- Sistema de patos ----
+const int NUM_PATOS = 3;
+enum EstadoPato { VOLANDO, CAYENDO, MUERTO };
+struct Pato {
+	float angulo;         // Ángulo actual en la órbita (radianes)
+	float velocidad;      // Velocidad angular (rad/segundo)
+	float altura;         // Altura Y de vuelo
+	EstadoPato estado;
+	float velocidadCaida; // Para la física de caída libre
+};
+const float RADIO_ORBITA = 20.0f; // Radio del anillo de pasto
+const float ALTURA_VUELO =  6.0f;
+std::array<Pato, NUM_PATOS> patos;
 
 // Crosshair vertices
 float crosshairVertices[] = {
@@ -108,11 +125,69 @@ int main()
 	// --- Shaders ---
 	Shader lightingShader("shaders/default.vert", "shaders/default.frag");
 	Shader hudShader("shaders/shader.vs", "shaders/shader.frag");
+	Shader animShader("shaders/anim.vs", "shaders/anim.frag");
 
 	// --- Models ---
 	Model Skybox((char*)"assets/models/Skybox.obj");
 	Model Piso((char*)"assets/models/piso.obj");
 	Model Gun((char*)"assets/models/zapper.obj");
+
+	Model Arbusto((char*)"assets/models/Bush.glb");
+	Model Nube1((char*)"assets/models/Nube_1.glb");
+	Model Nube2((char*)"assets/models/Nube_2.glb");
+	Model Nube3((char*)"assets/models/Nube_3.glb");
+	Model PastoAnillo((char*)"assets/models/E_Grass.glb");
+	Model PastoAnilloRev((char*)"assets/models/E_GrassBackwards.glb");
+
+	// --- Precomputar matrices de vegetación estática ---
+	struct InstanceData {
+		glm::mat4 model;
+		glm::mat3 normal;
+		int type; // 0 para normal, 1 para rev (solo para pasto)
+	};
+
+	const int NUM_ARBUSTOS = 8;
+	std::array<InstanceData, NUM_ARBUSTOS> arbustosData;
+	for (int i = 0; i < NUM_ARBUSTOS; i++) {
+		float ang = glm::radians(360.0f / NUM_ARBUSTOS * i);
+		glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(22.0f * cos(ang), -0.5f, 22.0f * sin(ang)));
+		m = glm::rotate(m, glm::radians(45.0f * i), glm::vec3(0.0f, 1.0f, 0.0f));
+		m = glm::scale(m, glm::vec3(2.5f));
+		arbustosData[i].model  = m;
+		arbustosData[i].normal = glm::mat3(glm::transpose(glm::inverse(m)));
+	}
+
+	const int SEGMENTOS_PASTO = 12;
+	std::array<InstanceData, SEGMENTOS_PASTO> pastoData;
+	for (int i = 0; i < SEGMENTOS_PASTO; i++) {
+		float ang = glm::radians(360.0f / SEGMENTOS_PASTO * i);
+		glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(18.0f * cos(ang), -1.0f, 18.0f * sin(ang)));
+		m = glm::rotate(m, ang, glm::vec3(0.0f, 1.0f, 0.0f));
+		m = glm::scale(m, glm::vec3(3.0f));
+		pastoData[i].model  = m;
+		pastoData[i].normal = glm::mat3(glm::transpose(glm::inverse(m)));
+		pastoData[i].type   = i % 2;
+	}
+
+	std::array<glm::vec3, 3> nubesBasePos = {{
+		{ 15.0f, 18.0f,  5.0f},
+		{-10.0f, 20.0f, 12.0f},
+		{  5.0f, 16.0f,-15.0f}
+	}};
+
+	std::cout << ">>> Cargando Pato..." << std::endl;
+	ModelAnim PatoAnimado("assets/models/Pato.fbx");
+	PatoAnimado.initShaders(animShader.Program);
+	std::cout << ">>> Pato listo" << std::endl;
+
+	// Distribuir los 3 patos equitativamente en la órbita
+	for (int i = 0; i < NUM_PATOS; i++) {
+		patos[i].angulo         = glm::radians(120.0f * i); // 0°, 120°, 240°
+		patos[i].velocidad      = 0.6f + i * 0.05f;
+		patos[i].altura         = ALTURA_VUELO + i * 0.5f;
+		patos[i].estado         = VOLANDO;
+		patos[i].velocidadCaida = 0.0f;
+	}
 
 	// --- Crosshair texture ---
 	GLuint crosshairTexture;
@@ -188,11 +263,28 @@ int main()
 		GLint projection, view, model, uvScale, texture;
 	} hu;
 
+	struct {
+		GLint projection, view, model, viewPos;
+		GLint lightDir, lightAmb, lightDiff, lightSpec;
+		GLint matSpec, matShininess;
+	} au;
+
 	hu.projection = glGetUniformLocation(hudShader.Program, "projection");
 	hu.view       = glGetUniformLocation(hudShader.Program, "view");
 	hu.model      = glGetUniformLocation(hudShader.Program, "model");
 	hu.uvScale    = glGetUniformLocation(hudShader.Program, "uvScale");
 	hu.texture    = glGetUniformLocation(hudShader.Program, "ourTexture");
+
+	au.projection   = glGetUniformLocation(animShader.Program, "projection");
+	au.view         = glGetUniformLocation(animShader.Program, "view");
+	au.model        = glGetUniformLocation(animShader.Program, "model");
+	au.viewPos      = glGetUniformLocation(animShader.Program, "viewPos");
+	au.lightDir     = glGetUniformLocation(animShader.Program, "light.direction");
+	au.lightAmb     = glGetUniformLocation(animShader.Program, "light.ambient");
+	au.lightDiff    = glGetUniformLocation(animShader.Program, "light.diffuse");
+	au.lightSpec    = glGetUniformLocation(animShader.Program, "light.specular");
+	au.matSpec      = glGetUniformLocation(animShader.Program, "material.specular");
+	au.matShininess = glGetUniformLocation(animShader.Program, "material.shininess");
 
 	// ---------------------------------------------------------------
 	// Static uniforms — set once, never change during the game
@@ -206,6 +298,18 @@ int main()
 	glUniform3f(lu.dirAmbient,    0.35f, 0.30f, 0.25f);
 	glUniform3f(lu.dirDiffuse,    0.85f, 0.75f, 0.60f);
 	glUniform3f(lu.dirSpecular,   0.4f,  0.4f,  0.4f);
+
+	animShader.Use();
+	glUniformMatrix4fv(au.projection, 1, GL_FALSE, glm::value_ptr(projection));
+	glUniform3f(au.lightDir,       -0.4f, -1.0f, -0.5f);
+	glUniform3f(au.lightAmb,        0.35f, 0.30f, 0.25f);
+	glUniform3f(au.lightDiff,       0.85f, 0.75f, 0.60f);
+	glUniform3f(au.lightSpec,       0.4f,  0.4f,  0.4f);
+	glUniform3f(au.matSpec,         0.5f,  0.5f,  0.5f);
+	glUniform1f(au.matShininess,    32.0f);
+
+	// Point lights and spotlight must be set on lightingShader, not animShader
+	lightingShader.Use();
 
 	// Point lights disabled (outdoor scene)
 	for (int i = 0; i < 4; i++) {
@@ -255,6 +359,22 @@ int main()
 		glfwPollEvents();
 		DoMovement();
 
+		// ---- Actualizar posición y estado de cada pato ----
+		for (int i = 0; i < NUM_PATOS; i++) {
+			if (patos[i].estado == VOLANDO) {
+				// Avanzar en la órbita circular
+				patos[i].angulo += patos[i].velocidad * deltaTime;
+				if (patos[i].angulo > glm::two_pi<float>())
+					patos[i].angulo -= glm::two_pi<float>();
+			} else if (patos[i].estado == CAYENDO) {
+				// Caída libre con gravedad
+				patos[i].velocidadCaida -= 15.0f * deltaTime;
+				patos[i].altura += patos[i].velocidadCaida * deltaTime;
+				if (patos[i].altura <= -1.0f)
+					patos[i].estado = MUERTO;
+			}
+		}
+
 		{
 			double rawX, rawY;
 			glfwGetCursorPos(window, &rawX, &rawY);
@@ -274,11 +394,10 @@ int main()
 		glUniformMatrix4fv(lu.view,   1, GL_FALSE, glm::value_ptr(view));
 		glUniform3fv(lu.viewPos,      1, glm::value_ptr(camera.position));
 
-		// Helper lambda: upload model + precomputed normal matrix, then draw
-		auto drawWorld = [&](Model& m, const glm::mat4& mat, bool tex, bool transp) {
+		// Helper lambda: upload model + normal matrix, then draw
+		auto drawWorld = [&](Model& m, const glm::mat4& mat, const glm::mat3& norm, bool tex, bool transp) {
 			glUniformMatrix4fv(lu.model, 1, GL_FALSE, glm::value_ptr(mat));
-			glm::mat3 nm = glm::mat3(glm::transpose(glm::inverse(mat)));
-			glUniformMatrix3fv(lu.normalMatrix, 1, GL_FALSE, glm::value_ptr(nm));
+			glUniformMatrix3fv(lu.normalMatrix, 1, GL_FALSE, glm::value_ptr(norm));
 			glUniform1i(lu.useTexture,   tex   ? 1 : 0);
 			glUniform1i(lu.transparency, transp ? 1 : 0);
 			m.Draw(lightingShader);
@@ -289,7 +408,8 @@ int main()
 		glDisable(GL_CULL_FACE);
 		glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
 		glUniformMatrix4fv(lu.view, 1, GL_FALSE, glm::value_ptr(skyboxView));
-		drawWorld(Skybox, glm::scale(glm::mat4(1.0f), glm::vec3(2.0f)), true, false);
+		glm::mat4 skyModel = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+		drawWorld(Skybox, skyModel, glm::mat3(1.0f), true, false);
 		glDepthMask(GL_TRUE);
 		glEnable(GL_CULL_FACE);
 
@@ -298,9 +418,60 @@ int main()
 		glUniform1i(lu.transparency, 1);
 
 		// Floor
-		glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -1.0f, 0.0f));
-		model = glm::scale(model, glm::vec3(100.0f, 1.0f, 100.0f));
-		drawWorld(Piso, model, true, true);
+		glm::mat4 floorModel = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+		floorModel = glm::scale(floorModel, glm::vec3(100.0f, 1.0f, 100.0f));
+		drawWorld(Piso, floorModel, glm::mat3(1.0f), true, true);
+
+		// ---- Dibujar patos (Shader Animado) ----
+		animShader.Use();
+		glUniformMatrix4fv(au.view,    1, GL_FALSE, glm::value_ptr(view));
+		glUniform3fv(au.viewPos,       1, glm::value_ptr(camera.position));
+		
+		for (int i = 0; i < NUM_PATOS; i++) {
+			if (patos[i].estado == MUERTO) continue;
+
+			float px = RADIO_ORBITA * cos(patos[i].angulo);
+			float pz = RADIO_ORBITA * sin(patos[i].angulo);
+			float py = patos[i].altura;
+
+			float yaw = patos[i].angulo + glm::half_pi<float>();
+
+			glm::mat4 matPato = glm::mat4(1.0f);
+			matPato = glm::translate(matPato, glm::vec3(px, py, pz));
+			matPato = glm::rotate(matPato, yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+			matPato = glm::scale(matPato, glm::vec3(0.012f)); 
+			matPato = glm::translate(matPato, -PatoAnimado.boundingCenter);
+
+			glUniformMatrix4fv(au.model, 1, GL_FALSE, glm::value_ptr(matPato));
+			PatoAnimado.Draw(animShader);
+		}
+
+		// ---- Dibujar Vegetación (Volver al lightingShader) ----
+		lightingShader.Use();
+		glUniformMatrix4fv(lu.view, 1, GL_FALSE, glm::value_ptr(view));
+
+		// Arbustos estáticos
+		for (const auto& data : arbustosData) {
+			drawWorld(Arbusto, data.model, data.normal, true, true);
+		}
+
+		// Nubes (dinámicas pero simplificadas)
+		Model* nubes[3] = { &Nube1, &Nube2, &Nube3 };
+		for (int i = 0; i < 3; i++) {
+			float offsetX = sin(currentFrame * 0.05f + i * 2.0f) * 3.0f;
+			glm::mat4 m = glm::translate(glm::mat4(1.0f), nubesBasePos[i] + glm::vec3(offsetX, 0.0f, 0.0f));
+			m = glm::scale(m, glm::vec3(4.0f));
+			// Para nubes, la normal matrix es simple porque el escalado es uniforme
+			drawWorld(*nubes[i], m, glm::mat3(1.0f), true, true);
+		}
+
+		// Anillo de pasto estático
+		for (const auto& data : pastoData) {
+			if (data.type == 0)
+				drawWorld(PastoAnillo, data.model, data.normal, true, true);
+			else
+				drawWorld(PastoAnilloRev, data.model, data.normal, true, true);
+		}
 
 		// ---- HUD (hudShader, no depth test against world) ----
 		glClear(GL_DEPTH_BUFFER_BIT);
@@ -309,7 +480,7 @@ int main()
 		glUniformMatrix4fv(hu.projection, 1, GL_FALSE, glm::value_ptr(projection));
 		glUniformMatrix4fv(hu.view,       1, GL_FALSE, glm::value_ptr(hudView));
 
-		model = glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, -0.8f, -1.0f));
+		glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, -0.8f, -1.0f));
 		model = glm::rotate(model, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 		model = glm::scale(model, glm::vec3(0.3f));
 		glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(model));
@@ -352,9 +523,20 @@ void DoMovement()
 		camera.ProcessKeyboard(LEFT, deltaTime);
 	if (keys[GLFW_KEY_D] || keys[GLFW_KEY_RIGHT])
 		camera.ProcessKeyboard(RIGHT, deltaTime);
+	
 	if (keys[GLFW_KEY_SPACE] && isGrounded) {
 		velocityY  = jumpForce;
 		isGrounded = false;
+	}
+
+	// Restringir al jugador al círculo central de tierra (radio = 8 unidades)
+	const float RADIO_TIERRA = 8.0f;
+	glm::vec2 posXZ(camera.position.x, camera.position.z);
+	float distanciaAlCentro = glm::length(posXZ);
+	if (distanciaAlCentro > RADIO_TIERRA) {
+		posXZ = glm::normalize(posXZ) * RADIO_TIERRA;
+		camera.position.x = posXZ.x;
+		camera.position.z = posXZ.y;
 	}
 }
 

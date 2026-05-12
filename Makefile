@@ -1,7 +1,7 @@
 # Makefile for Duck Hunt 3D
 
 CXX = g++
-CXXFLAGS = -std=c++11 -Wall -DGLEW_STATIC -fpermissive \
+CXXFLAGS = -std=c++17 -Wall -DGLEW_STATIC -fpermissive \
            -Iinclude \
            -Ilib/glm \
            -Ilib/SOIL2 \
