@@ -23,7 +23,6 @@
 
 // Function prototypes
 void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mode);
-void MouseCallback(GLFWwindow *window, double xPos, double yPos);
 void DoMovement();
 
 // Window dimensions
@@ -34,7 +33,6 @@ Camera  camera(glm::vec3(0.0f, 0.0f, 3.0f));
 GLfloat lastX = 0.0f;
 GLfloat lastY = 0.0f;
 bool keys[1024];
-bool firstMouse = true;
 
 // Crosshair vertices
 
@@ -95,7 +93,6 @@ int main()
 
 	// Set the required callback functions
 	glfwSetKeyCallback(window, KeyCallback);
-	glfwSetCursorPosCallback(window, MouseCallback);
 
 	// GLFW Options
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -174,6 +171,14 @@ int main()
 	// Define the projection 
 	glm::mat4 projection = glm::perspective( glm::radians(camera.GetZoom()), ( float )SCREEN_WIDTH/( float )SCREEN_HEIGHT, 0.1f, 1000.0f );
 
+	// Seed lastX/lastY with the actual cursor position so the first frame has zero delta
+	{
+		double initX, initY;
+		glfwGetCursorPos(window, &initX, &initY);
+		lastX = (GLfloat)initX;
+		lastY = (GLfloat)initY;
+	}
+
 	// Game loop
 	while (!glfwWindowShouldClose(window))
 	{
@@ -194,9 +199,25 @@ int main()
 			isGrounded = true;                
 		}
 
-		// Check if any events have been activiated (key pressed, mouse moved etc.) and call corresponding response functions
 		glfwPollEvents();
 		DoMovement();
+
+		// Mouse look: poll cursor position directly (one sample per frame).
+		// No center-warp — warping generates an OS event that can arrive inside the next
+		// glfwPollEvents(), resetting the position and producing zero delta every other frame.
+		// With GLFW_CURSOR_DISABLED the virtual cursor is unbounded, so no warp is needed.
+		{
+			double rawX, rawY;
+			glfwGetCursorPos(window, &rawX, &rawY);
+
+			GLfloat xOffset = glm::clamp((GLfloat)(rawX - lastX), -30.0f, 30.0f);
+			GLfloat yOffset = glm::clamp((GLfloat)(lastY - rawY), -30.0f, 30.0f);
+
+			lastX = (GLfloat)rawX;
+			lastY = (GLfloat)rawY;
+
+			camera.ProcessMouseMovement(xOffset, yOffset);
+		}
 
 		// Clear the colorbuffer
 		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
@@ -350,20 +371,3 @@ void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mode
 	}
 }
 
-void MouseCallback(GLFWwindow *window, double xPos, double yPos)
-{
-	if (firstMouse)
-	{
-		lastX = xPos;
-		lastY = yPos;
-		firstMouse = false;
-	}
-
-	GLfloat xOffset = xPos - lastX;
-	GLfloat yOffset = lastY - yPos;  // Reversed since y-coordinates go from bottom to left
-
-	lastX = xPos;
-	lastY = yPos;
-
-	camera.ProcessMouseMovement(xOffset, yOffset);
-}
