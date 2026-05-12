@@ -32,10 +32,19 @@ void DoMovement();
 int SCREEN_WIDTH, SCREEN_HEIGHT;
 
 // Camera
-Camera  camera(glm::vec3(0.0f, 0.0f, 3.0f));
-GLfloat lastX = 0.0f;
-GLfloat lastY = 0.0f;
+Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
 bool keys[1024];
+
+// Mouse look — accumulated per-event deltas from the cursor callback.
+// Using a callback (not glfwGetCursorPos polling) is required on WSL2 because
+// GLFW's internal center-warp for CURSOR_DISABLED mode happens before polling
+// returns, making the polled position ≈ center every frame (joystick effect).
+// The callback fires for real user motion only; GLFW suppresses warp-triggered events.
+double mouseAccX      = 0.0;
+double mouseAccY      = 0.0;
+double mousePrevX     = 0.0;
+double mousePrevY     = 0.0;
+bool   mouseFirstMove = true;
 
 // ---- Sistema de patos ----
 const int NUM_PATOS = 3;
@@ -50,6 +59,62 @@ struct Pato {
 const float RADIO_ORBITA = 20.0f; // Radio del anillo de pasto
 const float ALTURA_VUELO =  6.0f;
 std::array<Pato, NUM_PATOS> patos;
+
+// ---- Sistema de disparo ----
+int patosDerribados = 0;   // Contador global de patos eliminados
+int patosEscapados  = 0;   // Contador de patos que llegaron a escapar
+bool disparoRealizado = false; // Flag para el callback del mouse
+
+// ---- Sistema del perro ----
+enum EstadoPerro { PERRO_BUSCANDO, PERRO_ENCONTRADO, PERRO_MOSTRANDO, PERRO_RIENDO };
+EstadoPerro estadoPerro = PERRO_BUSCANDO;
+float timerPerro        = 0.0f;  
+float animTime          = 0.0f; // Para funciones seno/coseno
+int   patosEnRonda      = 0;     
+
+// Variables de animación jerárquica
+float articulacionPatas = 0.0f;
+float articulacionCola  = 0.0f;
+float articulacionCabeza = 0.0f;
+float articulacionCuerpoY = 0.0f;
+
+glm::vec3 posicionActualPerro(0.0f, -1.0f, 15.0f);
+glm::vec3 posImpactoPato(0.0f); 
+float rotacionPerro = 180.0f;
+bool camaraCenital = false; // false = FPS, true = cenital
+
+// ---- Efecto de plumas ----
+struct EfectoPlumas {
+	bool activo;
+	glm::vec3 posicion;
+	float timer;
+	int   frame;       // 0-4, ciclo de los 5 modelos de plumas
+};
+EfectoPlumas efectoPlumas = { false, glm::vec3(0.0f), 0.0f, 0 };
+const float DURACION_PLUMAS = 0.6f;
+
+// Forward declarations
+void perroReaccionarDisparo(glm::vec3 posImpacto);
+
+void CursorPosCallback(GLFWwindow*, double x, double y) {
+    if (mouseFirstMove) {
+        mousePrevX     = x;
+        mousePrevY     = y;
+        mouseFirstMove = false;
+        return;
+    }
+    mouseAccX += x - mousePrevX;
+    mouseAccY += y - mousePrevY;
+    mousePrevX = x;
+    mousePrevY = y;
+}
+
+// Callback invocado por GLFW al hacer click con el mouse
+void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+		disparoRealizado = true;
+	}
+}
 
 // Crosshair vertices
 float crosshairVertices[] = {
@@ -97,6 +162,8 @@ int main()
 	glfwGetFramebufferSize(window, &SCREEN_WIDTH, &SCREEN_HEIGHT);
 
 	glfwSetKeyCallback(window, KeyCallback);
+	glfwSetCursorPosCallback(window, CursorPosCallback);
+	glfwSetMouseButtonCallback(window, MouseButtonCallback);
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
 	glewExperimental = GL_TRUE;
@@ -138,6 +205,26 @@ int main()
 	Model Nube3((char*)"assets/models/Nube_3.glb");
 	Model PastoAnillo((char*)"assets/models/E_Grass.glb");
 	Model PastoAnilloRev((char*)"assets/models/E_GrassBackwards.glb");
+
+	// Jerarquía del perro
+	Model DogBody((char*)"assets/models/dog/DogBody.obj");
+	Model DogHead((char*)"assets/models/dog/HeadDog.obj");
+	Model DogTail((char*)"assets/models/dog/TailDog.obj");
+	Model DogLegFL((char*)"assets/models/dog/F_LeftLegDog.obj");
+	Model DogLegFR((char*)"assets/models/dog/F_RightLegDog.obj");
+	Model DogLegBL((char*)"assets/models/dog/B_LeftLegDog.obj");
+	Model DogLegBR((char*)"assets/models/dog/B_RightLegDog.obj");
+
+	// Modelo del cazador (jugador visible en cenital)
+	Model Cazador((char*)"assets/models/RedDog.obj");
+
+	// Efecto de plumas
+	Model Plumas1((char*)"assets/models/feathers_1.glb");
+	Model Plumas2((char*)"assets/models/feathers_2.glb");
+	Model Plumas3((char*)"assets/models/feathers_3.glb");
+	Model Plumas4((char*)"assets/models/feathers_4.glb");
+	Model Plumas5((char*)"assets/models/feathers_5.glb");
+	std::array<Model*, 5> framesPlumas = { &Plumas1, &Plumas2, &Plumas3, &Plumas4, &Plumas5 };
 
 	// --- Precomputar matrices de vegetación estática ---
 	struct InstanceData {
@@ -286,6 +373,10 @@ int main()
 	au.matSpec      = glGetUniformLocation(animShader.Program, "material.specular");
 	au.matShininess = glGetUniformLocation(animShader.Program, "material.shininess");
 
+	// Cache de uniformes adicionales para lightingShader (Cazador, Perro, Plumas)
+	// Reutilizamos la estructura 'lu' añadiendo lo necesario si hiciera falta, 
+	// pero los nombres de uniformes son los mismos.
+	
 	// ---------------------------------------------------------------
 	// Static uniforms — set once, never change during the game
 	// ---------------------------------------------------------------
@@ -329,13 +420,6 @@ int main()
 	glUniform1f(lu.slLinear,    0.0f);
 	glUniform1f(lu.slQuadratic, 0.0f);
 
-	// Seed mouse position
-	{
-		double initX, initY;
-		glfwGetCursorPos(window, &initX, &initY);
-		lastX = (GLfloat)initX;
-		lastY = (GLfloat)initY;
-	}
 
 	// ---------------------------------------------------------------
 	// Game loop
@@ -357,7 +441,46 @@ int main()
 
 		// Input
 		glfwPollEvents();
-		DoMovement();
+		if (!camaraCenital) {
+			DoMovement();
+		}
+
+		// ---- Procesar disparo ----
+		if (disparoRealizado) {
+			disparoRealizado = false; // always consume — prevents ghost shots when exiting cenital mode
+
+			if (!camaraCenital) {
+				glm::vec3 origenRayo    = camera.position;
+				glm::vec3 direccionRayo = glm::normalize(camera.front);
+				const float ANGULO_MAXIMO_IMPACTO = glm::radians(5.0f);
+
+				for (int i = 0; i < NUM_PATOS; i++) {
+					if (patos[i].estado != VOLANDO) continue;
+
+					float px = RADIO_ORBITA * cos(patos[i].angulo);
+					float pz = RADIO_ORBITA * sin(patos[i].angulo);
+					glm::vec3 posPato(px, patos[i].altura, pz);
+
+					glm::vec3 vecCamaraPato = glm::normalize(posPato - origenRayo);
+					float cosAngulo = glm::dot(direccionRayo, vecCamaraPato);
+					float angulo    = acos(glm::clamp(cosAngulo, -1.0f, 1.0f));
+					float distancia = glm::length(posPato - origenRayo);
+
+					if (angulo < ANGULO_MAXIMO_IMPACTO && distancia < 40.0f) {
+						patos[i].estado         = CAYENDO;
+						patos[i].velocidadCaida = 0.0f;
+						patosDerribados++;
+						perroReaccionarDisparo(posPato);
+
+						efectoPlumas.activo   = true;
+						efectoPlumas.posicion = posPato;
+						efectoPlumas.timer    = 0.0f;
+						efectoPlumas.frame    = 0;
+						break;
+					}
+				}
+			}
+		}
 
 		// ---- Actualizar posición y estado de cada pato ----
 		for (int i = 0; i < NUM_PATOS; i++) {
@@ -375,22 +498,102 @@ int main()
 			}
 		}
 
-		{
-			double rawX, rawY;
-			glfwGetCursorPos(window, &rawX, &rawY);
-			GLfloat xOffset = glm::clamp((GLfloat)(rawX - lastX), -30.0f, 30.0f);
-			GLfloat yOffset = glm::clamp((GLfloat)(lastY - rawY), -30.0f, 30.0f);
-			lastX = (GLfloat)rawX;
-			lastY = (GLfloat)rawY;
+		// ---- Actualizar máquina de estados del perro ----
+		timerPerro += deltaTime;
+		animTime   += deltaTime;
+
+		switch (estadoPerro) {
+			case PERRO_BUSCANDO:
+				// Mantenerse siempre a 10 unidades detrás de la cámara
+				posicionActualPerro = camera.position - (glm::normalize(glm::vec3(camera.front.x, 0.0f, camera.front.z)) * 10.0f);
+				posicionActualPerro.y = -1.0f; // Nivel del suelo
+				// Mirar en la misma dirección que el jugador para estar "de espaldas"
+				rotacionPerro = glm::degrees(atan2(camera.front.x, camera.front.z));
+				
+				articulacionPatas = sin(animTime * 8.0f) * 30.0f;
+				articulacionCola  = sin(animTime * 15.0f) * 20.0f;
+				articulacionCabeza = sin(animTime * 2.0f) * 10.0f;
+				articulacionCuerpoY = abs(sin(animTime * 8.0f)) * 0.1f;
+				break;
+
+			case PERRO_ENCONTRADO:
+				// Aparecer en el borde del claro (radio 7.5) en dirección al impacto
+				posicionActualPerro = glm::normalize(glm::vec3(posImpactoPato.x, 0.0f, posImpactoPato.z)) * 7.5f;
+				posicionActualPerro.y = -1.0f;
+				// Mirar hacia el centro del mapa (donde está el jugador)
+				rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
+
+				articulacionPatas = sin(animTime * 12.0f) * 40.0f; // Animación de correr más rápida
+				articulacionCola  = sin(animTime * 30.0f) * 40.0f;
+				articulacionCabeza = -15.0f;
+				articulacionCuerpoY = abs(sin(animTime * 12.0f)) * 0.2f;
+				
+				if (timerPerro >= 1.5f) {
+					estadoPerro = PERRO_MOSTRANDO;
+					timerPerro = 0.0f;
+				}
+				break;
+
+			case PERRO_MOSTRANDO:
+				// Misma posición que ENCONTRADO
+				rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
+				articulacionPatas = 0.0f;
+				articulacionCola  = sin(animTime * 5.0f) * 10.0f;
+				articulacionCabeza = 20.0f;
+				articulacionCuerpoY = 0.0f;
+
+				if (timerPerro >= 2.0f) {
+					estadoPerro = PERRO_BUSCANDO;
+					timerPerro = 0.0f;
+					patosEnRonda = 0;
+				}
+				break;
+
+			case PERRO_RIENDO:
+				// El perro se ríe frente al jugador
+				posicionActualPerro = glm::normalize(glm::vec3(camera.front.x, 0.0f, camera.front.z)) * 7.5f;
+				posicionActualPerro.y = -1.0f;
+				rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
+
+				articulacionPatas = 0.0f;
+				articulacionCola  = 0.0f;
+				articulacionCabeza = sin(animTime * 25.0f) * 15.0f;
+				articulacionCuerpoY = sin(animTime * 30.0f) * 0.05f;
+				
+				if (timerPerro >= 2.0f) {
+					estadoPerro = PERRO_BUSCANDO;
+					timerPerro = 0.0f;
+				}
+				break;
+		}
+
+		// Apply accumulated mouse deltas from CursorPosCallback.
+		// Always drain the accumulator (even in cenital) so stale deltas don't
+		// fire when the player switches back to FPS mode.
+		if (!camaraCenital) {
+			GLfloat xOffset = glm::clamp((GLfloat) mouseAccX, -30.0f, 30.0f);
+			GLfloat yOffset = glm::clamp((GLfloat)-mouseAccY, -30.0f, 30.0f);
 			camera.ProcessMouseMovement(xOffset, yOffset);
 		}
+		mouseAccX = 0.0;
+		mouseAccY = 0.0;
 
 		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 		// ---- World render (lightingShader) ----
 		lightingShader.Use();
-		glm::mat4 view = camera.GetViewMatrix();
+		glm::mat4 view;
+		if (camaraCenital) {
+			// Cámara cenital: posicionada arriba del mapa mirando hacia abajo
+			glm::vec3 ojoCenital(0.0f, 45.0f, 0.0f);
+			glm::vec3 objetivoCenital(0.0f, 0.0f, 0.0f);
+			glm::vec3 arribasCenital(0.0f, 0.0f, -1.0f);
+			view = glm::lookAt(ojoCenital, objetivoCenital, arribasCenital);
+		} else {
+			view = camera.GetViewMatrix();
+		}
+		
 		glUniformMatrix4fv(lu.view,   1, GL_FALSE, glm::value_ptr(view));
 		glUniform3fv(lu.viewPos,      1, glm::value_ptr(camera.position));
 
@@ -473,38 +676,115 @@ int main()
 				drawWorld(PastoAnilloRev, data.model, data.normal, true, true);
 		}
 
+		// ---- Dibujar cazador (solo visible en cámara cenital) ----
+		if (camaraCenital) {
+			glm::mat4 matCazador = glm::translate(glm::mat4(1.0f), camera.position - glm::vec3(0.0f, 0.8f, 0.0f));
+			float yawCazador = atan2(camera.front.x, camera.front.z);
+			matCazador = glm::rotate(matCazador, yawCazador, glm::vec3(0.0f, 1.0f, 0.0f));
+			matCazador = glm::scale(matCazador, glm::vec3(1.2f));
+
+			drawWorld(Cazador, matCazador, glm::mat3(1.0f), true, true);
+		}
+
+		// ---- Dibujar perro (Jerárquico) ----
+		{
+			// Cuerpo (Raíz)
+			glm::mat4 modelCuerpo = glm::translate(glm::mat4(1.0f), posicionActualPerro + glm::vec3(0.0f, articulacionCuerpoY, 0.0f));
+			modelCuerpo = glm::rotate(modelCuerpo, glm::radians(rotacionPerro), glm::vec3(0.0f, 1.0f, 0.0f));
+			modelCuerpo = glm::scale(modelCuerpo, glm::vec3(1.5f));
+			
+			drawWorld(DogBody, modelCuerpo, glm::mat3(1.0f), true, true);
+
+			// Cabeza (Hijo del Cuerpo)
+			glm::mat4 modelCabeza = modelCuerpo;
+			modelCabeza = glm::translate(modelCabeza, glm::vec3(0.0f, 0.093f, 0.208f));
+			modelCabeza = glm::rotate(modelCabeza, glm::radians(articulacionCabeza), glm::vec3(1.0f, 0.0f, 0.0f));
+			drawWorld(DogHead, modelCabeza, glm::mat3(1.0f), true, true);
+
+			// Cola (Hijo del Cuerpo)
+			glm::mat4 modelCola = modelCuerpo;
+			modelCola = glm::translate(modelCola, glm::vec3(0.0f, 0.026f, -0.288f));
+			modelCola = glm::rotate(modelCola, glm::radians(articulacionCola), glm::vec3(0.0f, 1.0f, 0.0f));
+			drawWorld(DogTail, modelCola, glm::mat3(1.0f), true, true);
+
+			// Patas Delanteras
+			glm::mat4 modelFL = modelCuerpo;
+			modelFL = glm::translate(modelFL, glm::vec3(0.112f, -0.044f, 0.074f));
+			modelFL = glm::rotate(modelFL, glm::radians(articulacionPatas), glm::vec3(1.0f, 0.0f, 0.0f));
+			drawWorld(DogLegFL, modelFL, glm::mat3(1.0f), true, true);
+
+			glm::mat4 modelFR = modelCuerpo;
+			modelFR = glm::translate(modelFR, glm::vec3(-0.111f, -0.055f, 0.074f));
+			modelFR = glm::rotate(modelFR, glm::radians(-articulacionPatas), glm::vec3(1.0f, 0.0f, 0.0f));
+			drawWorld(DogLegFR, modelFR, glm::mat3(1.0f), true, true);
+
+			// Patas Traseras
+			glm::mat4 modelBL = modelCuerpo;
+			modelBL = glm::translate(modelBL, glm::vec3(0.082f, -0.046f, -0.218f));
+			modelBL = glm::rotate(modelBL, glm::radians(-articulacionPatas), glm::vec3(1.0f, 0.0f, 0.0f));
+			drawWorld(DogLegBL, modelBL, glm::mat3(1.0f), true, true);
+
+			glm::mat4 modelBR = modelCuerpo;
+			modelBR = glm::translate(modelBR, glm::vec3(-0.083f, -0.057f, -0.231f));
+			modelBR = glm::rotate(modelBR, glm::radians(articulacionPatas), glm::vec3(1.0f, 0.0f, 0.0f));
+			drawWorld(DogLegBR, modelBR, glm::mat3(1.0f), true, true);
+		}
+
+		// ---- Actualizar y Dibujar efecto de plumas ----
+		if (efectoPlumas.activo) {
+			efectoPlumas.timer += deltaTime;
+			efectoPlumas.frame = (int)(efectoPlumas.timer / (DURACION_PLUMAS / 5.0f));
+
+			if (efectoPlumas.timer >= DURACION_PLUMAS) {
+				efectoPlumas.activo = false;
+			} else {
+				glm::mat4 matPlumas = glm::translate(glm::mat4(1.0f), efectoPlumas.posicion);
+				matPlumas = glm::rotate(matPlumas, efectoPlumas.timer * 3.0f, glm::vec3(0.0f, 1.0f, 0.0f));
+				matPlumas = glm::scale(matPlumas, glm::vec3(2.0f));
+
+				int frameIdx = glm::clamp(efectoPlumas.frame, 0, 4);
+				drawWorld(*framesPlumas[frameIdx], matPlumas, glm::mat3(1.0f), true, true);
+			}
+		}
+
 		// ---- HUD (hudShader, no depth test against world) ----
-		glClear(GL_DEPTH_BUFFER_BIT);
-		hudShader.Use();
-		glm::mat4 hudView = glm::mat4(1.0f);
-		glUniformMatrix4fv(hu.projection, 1, GL_FALSE, glm::value_ptr(projection));
-		glUniformMatrix4fv(hu.view,       1, GL_FALSE, glm::value_ptr(hudView));
+		if (!camaraCenital) {
+			glClear(GL_DEPTH_BUFFER_BIT);
+			hudShader.Use();
+			glm::mat4 hudView = glm::mat4(1.0f);
+			glUniformMatrix4fv(hu.projection, 1, GL_FALSE, glm::value_ptr(projection));
+			glUniformMatrix4fv(hu.view,       1, GL_FALSE, glm::value_ptr(hudView));
 
-		glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, -0.8f, -1.0f));
-		model = glm::rotate(model, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-		model = glm::scale(model, glm::vec3(0.3f));
-		glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(model));
-		glUniform1f(hu.uvScale, 1.0f);
-		Gun.Draw(hudShader);
+			glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, -0.8f, -1.0f));
+			model = glm::rotate(model, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+			model = glm::scale(model, glm::vec3(0.3f));
+			glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(model));
+			glUniform1f(hu.uvScale, 1.0f);
+			Gun.Draw(hudShader);
 
-		// Crosshair (screen-space quad)
-		glDisable(GL_DEPTH_TEST);
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		glm::mat4 identity = glm::mat4(1.0f);
-		glUniformMatrix4fv(hu.view,       1, GL_FALSE, glm::value_ptr(identity));
-		glUniformMatrix4fv(hu.projection, 1, GL_FALSE, glm::value_ptr(identity));
-		float ar = (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT;
-		model = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f / ar, 1.0f, 1.0f));
-		glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(model));
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, crosshairTexture);
-		glUniform1i(hu.texture, 0);
-		glBindVertexArray(VAO);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		glBindVertexArray(0);
-		glDisable(GL_BLEND);
-		glEnable(GL_DEPTH_TEST);
+			// Crosshair (screen-space quad)
+			glDisable(GL_DEPTH_TEST);
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			
+			glm::mat4 identity = glm::mat4(1.0f);
+			glUniformMatrix4fv(hu.view,       1, GL_FALSE, glm::value_ptr(identity));
+			glUniformMatrix4fv(hu.projection, 1, GL_FALSE, glm::value_ptr(identity));
+			float ar = (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT;
+			model = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f / ar, 1.0f, 1.0f));
+			glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(model));
+			
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, crosshairTexture);
+			glUniform1i(hu.texture, 0);
+			
+			glBindVertexArray(VAO);
+			glDrawArrays(GL_TRIANGLES, 0, 6);
+			glBindVertexArray(0);
+			
+			glDisable(GL_BLEND);
+			glEnable(GL_DEPTH_TEST);
+		}
 
 		glfwSwapBuffers(window);
 	}
@@ -545,8 +825,19 @@ void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mode
 	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GL_TRUE);
 
+	if (key == GLFW_KEY_C && action == GLFW_PRESS) {
+		camaraCenital = !camaraCenital;
+	}
+
 	if (key >= 0 && key < 1024) {
 		if (action == GLFW_PRESS)   keys[key] = true;
 		if (action == GLFW_RELEASE) keys[key] = false;
 	}
+}
+
+void perroReaccionarDisparo(glm::vec3 posImpacto) {
+	estadoPerro = PERRO_ENCONTRADO;
+	timerPerro  = 0.0f;
+	posImpactoPato = posImpacto;
+	patosEnRonda++;
 }
