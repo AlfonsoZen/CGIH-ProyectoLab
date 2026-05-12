@@ -10,11 +10,13 @@ out vec2 TexCoords;
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+uniform mat3 normalMatrix; // precomputed on CPU: transpose(inverse(model))
 
 void main()
 {
-    gl_Position = projection * view *  model * vec4(position, 1.0f);
-    FragPos = vec3(model * vec4(position, 1.0f));
-    Normal = mat3(transpose(inverse(model))) * normal;
-    TexCoords = texCoords;
+    vec4 worldPos = model * vec4(position, 1.0);
+    gl_Position   = projection * view * worldPos;
+    FragPos       = vec3(worldPos);
+    Normal        = normalMatrix * normal;
+    TexCoords     = texCoords;
 }

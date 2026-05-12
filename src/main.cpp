@@ -35,143 +35,197 @@ GLfloat lastY = 0.0f;
 bool keys[1024];
 
 // Crosshair vertices
-
 float crosshairVertices[] = {
-	// (x, y, z) - (u,v)
-	
-	-0.05f,  0.05f, -0.1f,     0.0f, 1.0f,
-    -0.05f, -0.05f, -0.1f,     0.0f, 0.0f,
-    0.05f, -0.05f, -0.1f,     1.0f, 0.0f,
-
-    -0.05f,  0.05f, -0.1f,     0.0f, 1.0f,
-    0.05f, -0.05f, -0.1f,     1.0f, 0.0f,
-    0.05f,  0.05f, -0.1f,     1.0f, 1.0f
-
+	-0.05f,  0.05f, -0.1f,   0.0f, 1.0f,
+	-0.05f, -0.05f, -0.1f,   0.0f, 0.0f,
+	 0.05f, -0.05f, -0.1f,   1.0f, 0.0f,
+	-0.05f,  0.05f, -0.1f,   0.0f, 1.0f,
+	 0.05f, -0.05f, -0.1f,   1.0f, 0.0f,
+	 0.05f,  0.05f, -0.1f,   1.0f, 1.0f
 };
 
 // Deltatime
-GLfloat deltaTime = 0.0f;	// Time between current frame and last frame
-GLfloat lastFrame = 0.0f;  	// Time of last frame
+GLfloat deltaTime = 0.0f;
+GLfloat lastFrame = 0.0f;
 
-//Physics
-GLfloat velocityY = 0.0f;
-GLfloat gravity = -30.0f;
-GLfloat jumpForce = 12.0f;    
-GLfloat groundHeight = 1.0f; 
-bool isGrounded = true;
+// Physics
+GLfloat velocityY    = 0.0f;
+GLfloat gravity      = -30.0f;
+GLfloat jumpForce    = 12.0f;
+GLfloat groundHeight = 1.0f;
+bool    isGrounded   = true;
 
 int main()
 {
-	// Init GLFW
 	glfwInit();
 
-	// Set all the required options for GLFW
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
 
-	GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
-	const GLFWvidmode* mode = glfwGetVideoMode(primaryMonitor);
+	GLFWmonitor*       primaryMonitor = glfwGetPrimaryMonitor();
+	const GLFWvidmode* mode           = glfwGetVideoMode(primaryMonitor);
 	glfwWindowHint(GLFW_DECORATED, GL_FALSE);
 
-	// Create a GLFWwindow object that we can use for GLFW's functions
 	GLFWwindow* window = glfwCreateWindow(mode->width, mode->height, "Duck Hunt 3D", nullptr, nullptr);
-
-	if (nullptr == window)
-	{
+	if (!window) {
 		std::cout << "Failed to create GLFW window" << std::endl;
 		glfwTerminate();
-
 		return EXIT_FAILURE;
 	}
 
 	glfwMakeContextCurrent(window);
-
 	glfwGetFramebufferSize(window, &SCREEN_WIDTH, &SCREEN_HEIGHT);
 
-	// Set the required callback functions
 	glfwSetKeyCallback(window, KeyCallback);
-
-	// GLFW Options
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-	// Set this to true so GLEW knows to use a modern approach to retrieving function pointers and extensions
 	glewExperimental = GL_TRUE;
-	// Initialize GLEW to setup the OpenGL Function pointers
-	if (GLEW_OK != glewInit())
-	{
+	if (GLEW_OK != glewInit()) {
 		std::cout << "Failed to initialize GLEW" << std::endl;
 		return EXIT_FAILURE;
 	}
 
-	// Define the viewport dimensions
 	glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+	glEnable(GL_DEPTH_TEST);
 
-	// Buffers
-
+	// --- Crosshair VAO ---
 	GLuint VAO, crosshairVBO;
 	glGenVertexArrays(1, &VAO);
 	glGenBuffers(1, &crosshairVBO);
-
 	glBindVertexArray(VAO);
 	glBindBuffer(GL_ARRAY_BUFFER, crosshairVBO);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(crosshairVertices), crosshairVertices, GL_STATIC_DRAW);
-
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
-
 	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
 	glEnableVertexAttribArray(2);
-
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
 
-	// OpenGL options
-	glEnable(GL_DEPTH_TEST);
+	// --- Shaders ---
+	Shader lightingShader("shaders/default.vert", "shaders/default.frag");
+	Shader hudShader("shaders/shader.vs", "shaders/shader.frag");
 
-	// Import shaders
-	Shader shader("shaders/shader.vs", "shaders/shader.frag");
-	
-	// Import models
+	// --- Models ---
 	Model Skybox((char*)"assets/models/Skybox.obj");
 	Model Piso((char*)"assets/models/piso.obj");
 	Model Gun((char*)"assets/models/zapper.obj");
 
-	// Import textures
-
+	// --- Crosshair texture ---
 	GLuint crosshairTexture;
 	glGenTextures(1, &crosshairTexture);
 	glBindTexture(GL_TEXTURE_2D, crosshairTexture);
-
-	// Parámetros de textura
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-	int textureWidth, textureHeight, nrChannels;
-	stbi_set_flip_vertically_on_load(true); 
-	unsigned char *image = stbi_load("assets/textures/crosshair.png", &textureWidth, &textureHeight, &nrChannels, STBI_rgb_alpha);
-	
-	if (!image) {
-    	std::cout << "FAILED: " << stbi_failure_reason() << std::endl;
-	}
-
-	if (image) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
-		glGenerateMipmap(GL_TEXTURE_2D);
-		stbi_image_free(image);
-	} else {
-		std::cout << "Failed to load texture" << std::endl;
+	{
+		int w, h, ch;
+		stbi_set_flip_vertically_on_load(true);
+		unsigned char* img = stbi_load("assets/textures/crosshair.png", &w, &h, &ch, STBI_rgb_alpha);
+		if (img) {
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, img);
+			glGenerateMipmap(GL_TEXTURE_2D);
+			stbi_image_free(img);
+		} else {
+			std::cout << "Failed to load crosshair texture" << std::endl;
+		}
 	}
 	glBindTexture(GL_TEXTURE_2D, 0);
 
-	// Define the projection 
-	glm::mat4 projection = glm::perspective( glm::radians(camera.GetZoom()), ( float )SCREEN_WIDTH/( float )SCREEN_HEIGHT, 0.1f, 1000.0f );
+	glm::mat4 projection = glm::perspective(
+		glm::radians(camera.GetZoom()),
+		(float)SCREEN_WIDTH / (float)SCREEN_HEIGHT,
+		0.1f, 1000.0f
+	);
 
-	// Seed lastX/lastY with the actual cursor position so the first frame has zero delta
+	// ---------------------------------------------------------------
+	// Cache uniform locations — glGetUniformLocation is a string lookup
+	// and must NOT be called every frame.
+	// ---------------------------------------------------------------
+	struct {
+		GLint projection, view, model, normalMatrix, viewPos;
+		GLint transparency, useTexture, shininess;
+		GLint dirDirection, dirAmbient, dirDiffuse, dirSpecular;
+		GLint plAmbient[4], plDiffuse[4], plSpecular[4];
+		GLint plConstant[4], plLinear[4], plQuadratic[4];
+		GLint slAmbient, slDiffuse, slSpecular;
+		GLint slConstant, slLinear, slQuadratic;
+	} lu;
+
+	lu.projection    = glGetUniformLocation(lightingShader.Program, "projection");
+	lu.view          = glGetUniformLocation(lightingShader.Program, "view");
+	lu.model         = glGetUniformLocation(lightingShader.Program, "model");
+	lu.normalMatrix  = glGetUniformLocation(lightingShader.Program, "normalMatrix");
+	lu.viewPos      = glGetUniformLocation(lightingShader.Program, "viewPos");
+	lu.transparency = glGetUniformLocation(lightingShader.Program, "transparency");
+	lu.useTexture   = glGetUniformLocation(lightingShader.Program, "useTexture");
+	lu.shininess    = glGetUniformLocation(lightingShader.Program, "material.shininess");
+	lu.dirDirection = glGetUniformLocation(lightingShader.Program, "dirLight.direction");
+	lu.dirAmbient   = glGetUniformLocation(lightingShader.Program, "dirLight.ambient");
+	lu.dirDiffuse   = glGetUniformLocation(lightingShader.Program, "dirLight.diffuse");
+	lu.dirSpecular  = glGetUniformLocation(lightingShader.Program, "dirLight.specular");
+	for (int i = 0; i < 4; i++) {
+		std::string b = "pointLights[" + std::to_string(i) + "].";
+		lu.plAmbient[i]   = glGetUniformLocation(lightingShader.Program, (b + "ambient").c_str());
+		lu.plDiffuse[i]   = glGetUniformLocation(lightingShader.Program, (b + "diffuse").c_str());
+		lu.plSpecular[i]  = glGetUniformLocation(lightingShader.Program, (b + "specular").c_str());
+		lu.plConstant[i]  = glGetUniformLocation(lightingShader.Program, (b + "constant").c_str());
+		lu.plLinear[i]    = glGetUniformLocation(lightingShader.Program, (b + "linear").c_str());
+		lu.plQuadratic[i] = glGetUniformLocation(lightingShader.Program, (b + "quadratic").c_str());
+	}
+	lu.slAmbient   = glGetUniformLocation(lightingShader.Program, "spotLight.ambient");
+	lu.slDiffuse   = glGetUniformLocation(lightingShader.Program, "spotLight.diffuse");
+	lu.slSpecular  = glGetUniformLocation(lightingShader.Program, "spotLight.specular");
+	lu.slConstant  = glGetUniformLocation(lightingShader.Program, "spotLight.constant");
+	lu.slLinear    = glGetUniformLocation(lightingShader.Program, "spotLight.linear");
+	lu.slQuadratic = glGetUniformLocation(lightingShader.Program, "spotLight.quadratic");
+
+	struct {
+		GLint projection, view, model, uvScale, texture;
+	} hu;
+
+	hu.projection = glGetUniformLocation(hudShader.Program, "projection");
+	hu.view       = glGetUniformLocation(hudShader.Program, "view");
+	hu.model      = glGetUniformLocation(hudShader.Program, "model");
+	hu.uvScale    = glGetUniformLocation(hudShader.Program, "uvScale");
+	hu.texture    = glGetUniformLocation(hudShader.Program, "ourTexture");
+
+	// ---------------------------------------------------------------
+	// Static uniforms — set once, never change during the game
+	// ---------------------------------------------------------------
+	lightingShader.Use();
+	glUniformMatrix4fv(lu.projection, 1, GL_FALSE, glm::value_ptr(projection));
+	glUniform1f(lu.shininess, 32.0f);
+
+	// Sun (directional light)
+	glUniform3f(lu.dirDirection, -0.4f, -1.0f, -0.5f);
+	glUniform3f(lu.dirAmbient,    0.35f, 0.30f, 0.25f);
+	glUniform3f(lu.dirDiffuse,    0.85f, 0.75f, 0.60f);
+	glUniform3f(lu.dirSpecular,   0.4f,  0.4f,  0.4f);
+
+	// Point lights disabled (outdoor scene)
+	for (int i = 0; i < 4; i++) {
+		glUniform3f(lu.plAmbient[i],   0.0f, 0.0f, 0.0f);
+		glUniform3f(lu.plDiffuse[i],   0.0f, 0.0f, 0.0f);
+		glUniform3f(lu.plSpecular[i],  0.0f, 0.0f, 0.0f);
+		glUniform1f(lu.plConstant[i],  1.0f);
+		glUniform1f(lu.plLinear[i],    0.0f);
+		glUniform1f(lu.plQuadratic[i], 0.0f);
+	}
+
+	// Spotlight disabled
+	glUniform3f(lu.slAmbient,   0.0f, 0.0f, 0.0f);
+	glUniform3f(lu.slDiffuse,   0.0f, 0.0f, 0.0f);
+	glUniform3f(lu.slSpecular,  0.0f, 0.0f, 0.0f);
+	glUniform1f(lu.slConstant,  1.0f);
+	glUniform1f(lu.slLinear,    0.0f);
+	glUniform1f(lu.slQuadratic, 0.0f);
+
+	// Seed mouse position
 	{
 		double initX, initY;
 		glfwGetCursorPos(window, &initX, &initY);
@@ -179,195 +233,138 @@ int main()
 		lastY = (GLfloat)initY;
 	}
 
+	// ---------------------------------------------------------------
 	// Game loop
+	// ---------------------------------------------------------------
 	while (!glfwWindowShouldClose(window))
 	{
-		// Calculate deltatime of current frame
 		GLfloat currentFrame = glfwGetTime();
 		deltaTime = currentFrame - lastFrame;
 		lastFrame = currentFrame;
 
-		// Jump logic
+		// Physics
 		velocityY += gravity * deltaTime;
-
 		camera.position.y += velocityY * deltaTime;
-
-		if (camera.position.y <= groundHeight)
-		{
+		if (camera.position.y <= groundHeight) {
 			camera.position.y = groundHeight;
-			velocityY = 0.0f;                 
-			isGrounded = true;                
+			velocityY  = 0.0f;
+			isGrounded = true;
 		}
 
+		// Input
 		glfwPollEvents();
 		DoMovement();
 
-		// Mouse look: poll cursor position directly (one sample per frame).
-		// No center-warp — warping generates an OS event that can arrive inside the next
-		// glfwPollEvents(), resetting the position and producing zero delta every other frame.
-		// With GLFW_CURSOR_DISABLED the virtual cursor is unbounded, so no warp is needed.
 		{
 			double rawX, rawY;
 			glfwGetCursorPos(window, &rawX, &rawY);
-
 			GLfloat xOffset = glm::clamp((GLfloat)(rawX - lastX), -30.0f, 30.0f);
 			GLfloat yOffset = glm::clamp((GLfloat)(lastY - rawY), -30.0f, 30.0f);
-
 			lastX = (GLfloat)rawX;
 			lastY = (GLfloat)rawY;
-
 			camera.ProcessMouseMovement(xOffset, yOffset);
 		}
 
-		// Clear the colorbuffer
 		glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		//Load Skybox
-		shader.Use();
+		// ---- World render (lightingShader) ----
+		lightingShader.Use();
+		glm::mat4 view = camera.GetViewMatrix();
+		glUniformMatrix4fv(lu.view,   1, GL_FALSE, glm::value_ptr(view));
+		glUniform3fv(lu.viewPos,      1, glm::value_ptr(camera.position));
 
+		// Helper lambda: upload model + precomputed normal matrix, then draw
+		auto drawWorld = [&](Model& m, const glm::mat4& mat, bool tex, bool transp) {
+			glUniformMatrix4fv(lu.model, 1, GL_FALSE, glm::value_ptr(mat));
+			glm::mat3 nm = glm::mat3(glm::transpose(glm::inverse(mat)));
+			glUniformMatrix3fv(lu.normalMatrix, 1, GL_FALSE, glm::value_ptr(nm));
+			glUniform1i(lu.useTexture,   tex   ? 1 : 0);
+			glUniform1i(lu.transparency, transp ? 1 : 0);
+			m.Draw(lightingShader);
+		};
+
+		// Skybox — strip translation from view so it stays "infinitely far"
 		glDepthMask(GL_FALSE);
 		glDisable(GL_CULL_FACE);
-
-		glm::mat4 model(1);
-		glm::mat4 skyboxView = glm::mat4(glm::mat3(camera.GetViewMatrix()));
-
-		model = glm::scale(model, glm::vec3(2.0f));
-
-		glUniformMatrix4fv(glGetUniformLocation(shader.Program, "model"), 1, GL_FALSE, glm::value_ptr(model));
-		glUniformMatrix4fv(glGetUniformLocation(shader.Program, "view"), 1, GL_FALSE, glm::value_ptr(skyboxView));
-		glUniformMatrix4fv(glGetUniformLocation(shader.Program, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-		
-		Skybox.Draw(shader);
-		
+		glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
+		glUniformMatrix4fv(lu.view, 1, GL_FALSE, glm::value_ptr(skyboxView));
+		drawWorld(Skybox, glm::scale(glm::mat4(1.0f), glm::vec3(2.0f)), true, false);
 		glDepthMask(GL_TRUE);
 		glEnable(GL_CULL_FACE);
 
-		// Synthetic camera
-		glm::mat4 view = camera.GetViewMatrix();
-        glUniformMatrix4fv(glGetUniformLocation(shader.Program, "view"), 1, GL_FALSE, glm::value_ptr(view));
+		// Restore full view for world objects
+		glUniformMatrix4fv(lu.view, 1, GL_FALSE, glm::value_ptr(view));
+		glUniform1i(lu.transparency, 1);
 
 		// Floor
-		model = glm::mat4(1);
-		
-		model = glm::translate(model, glm::vec3(0.0f, -1.0f, 0.0f));
+		glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -1.0f, 0.0f));
 		model = glm::scale(model, glm::vec3(100.0f, 1.0f, 100.0f));
+		drawWorld(Piso, model, true, true);
 
-		glUniformMatrix4fv(glGetUniformLocation(shader.Program, "model"), 1, GL_FALSE, glm::value_ptr(model));
-		glUniform1f(glGetUniformLocation(shader.Program, "uvScale"), 100.0f);
-		
-		Piso.Draw(shader);
-
-		glUniform1f(glGetUniformLocation(shader.Program, "uvScale"), 1.0f);
-
-		// Gun
-		model = glm::mat4(1);
-
+		// ---- HUD (hudShader, no depth test against world) ----
 		glClear(GL_DEPTH_BUFFER_BIT);
+		hudShader.Use();
+		glm::mat4 hudView = glm::mat4(1.0f);
+		glUniformMatrix4fv(hu.projection, 1, GL_FALSE, glm::value_ptr(projection));
+		glUniformMatrix4fv(hu.view,       1, GL_FALSE, glm::value_ptr(hudView));
 
-		view = glm::mat4(1);
-        glUniformMatrix4fv(glGetUniformLocation(shader.Program, "view"), 1, GL_FALSE, glm::value_ptr(view));
+		model = glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, -0.8f, -1.0f));
+		model = glm::rotate(model, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		model = glm::scale(model, glm::vec3(0.3f));
+		glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(model));
+		glUniform1f(hu.uvScale, 1.0f);
+		Gun.Draw(hudShader);
 
-		model = glm::translate(model, glm::vec3(0.5f,-0.8f,-1.0f));
-		model = glm::rotate(model, glm::radians(180.0f),glm::vec3(0.0f,1.0f,0.0f));
-		model = glm::scale(model, glm::vec3(0.3f, 0.3f, 0.3f));
-		glUniformMatrix4fv(glGetUniformLocation(shader.Program, "model"), 1, GL_FALSE, glm::value_ptr(model));
-
-		Gun.Draw(shader);
-
-		// Crosshair (es lo último que se dibuja)
-
+		// Crosshair (screen-space quad)
 		glDisable(GL_DEPTH_TEST);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        GLint modelLoc = glGetUniformLocation(shader.Program, "model");
-        GLint viewLoc  = glGetUniformLocation(shader.Program, "view");
-        GLint projLoc  = glGetUniformLocation(shader.Program, "projection");
-
-        glm::mat4 identity = glm::mat4(1.0f); 
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(identity));
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(identity));
-
-        float aspectRatio = (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT;
-        glm::mat4 crosshairModel = glm::mat4(1.0f);
-        crosshairModel = glm::scale(crosshairModel, glm::vec3(1.0f / aspectRatio, 1.0f, 1.0f));
-
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(crosshairModel));
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, crosshairTexture);
-        glUniform1i(glGetUniformLocation(shader.Program, "ourTexture"), 0);
-
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        glBindVertexArray(0);
-
-        glDisable(GL_BLEND);
-        glEnable(GL_DEPTH_TEST);
-
-		// Stuff ---
-
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glm::mat4 identity = glm::mat4(1.0f);
+		glUniformMatrix4fv(hu.view,       1, GL_FALSE, glm::value_ptr(identity));
+		glUniformMatrix4fv(hu.projection, 1, GL_FALSE, glm::value_ptr(identity));
+		float ar = (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT;
+		model = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f / ar, 1.0f, 1.0f));
+		glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(model));
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, crosshairTexture);
+		glUniform1i(hu.texture, 0);
+		glBindVertexArray(VAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
 		glBindVertexArray(0);
+		glDisable(GL_BLEND);
+		glEnable(GL_DEPTH_TEST);
 
-		// Swap the screen buffers
 		glfwSwapBuffers(window);
 	}
 
-	// Terminate GLFW, clearing any resources allocated by GLFW.
 	glfwTerminate();
-
 	return 0;
 }
 
-// Moves/alters the camera positions based on user input
 void DoMovement()
 {
-	// Camera controls
 	if (keys[GLFW_KEY_W] || keys[GLFW_KEY_UP])
-	{
 		camera.ProcessKeyboard(FORWARD, deltaTime);
-	}
-
 	if (keys[GLFW_KEY_S] || keys[GLFW_KEY_DOWN])
-	{
 		camera.ProcessKeyboard(BACKWARD, deltaTime);
-	}
-
 	if (keys[GLFW_KEY_A] || keys[GLFW_KEY_LEFT])
-	{
 		camera.ProcessKeyboard(LEFT, deltaTime);
-	}
-
 	if (keys[GLFW_KEY_D] || keys[GLFW_KEY_RIGHT])
-	{
 		camera.ProcessKeyboard(RIGHT, deltaTime);
+	if (keys[GLFW_KEY_SPACE] && isGrounded) {
+		velocityY  = jumpForce;
+		isGrounded = false;
 	}
-	if (keys[GLFW_KEY_SPACE] && isGrounded)
-	{
-		velocityY = jumpForce; // Disparar al personaje hacia arriba
-    	isGrounded = false;    // Ya no está en el suelo
-	}
-
 }
 
 void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mode)
 {
-	if (GLFW_KEY_ESCAPE == key && GLFW_PRESS == action)
-	{
+	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GL_TRUE);
-	}
 
-	if (key >= 0 && key < 1024)
-	{
-		if (action == GLFW_PRESS)
-		{
-			keys[key] = true;
-		}
-		else if (action == GLFW_RELEASE)
-		{
-			keys[key] = false;
-		}
+	if (key >= 0 && key < 1024) {
+		if (action == GLFW_PRESS)   keys[key] = true;
+		if (action == GLFW_RELEASE) keys[key] = false;
 	}
 }
-
