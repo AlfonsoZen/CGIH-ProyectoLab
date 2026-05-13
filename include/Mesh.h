@@ -67,26 +67,20 @@ public:
 			glUniform1i(glGetUniformLocation(shader.Program, "useTexture"), 1);
 			for (GLuint i = 0; i < this->textures.size(); i++)
 			{
-				glActiveTexture(GL_TEXTURE0 + i); // Active proper texture unit before binding
-												  // Retrieve texture number (the N in diffuse_textureN)
-				stringstream ss;
-				string number;
-				string name = this->textures[i].type;
-
-				if (name == "texture_diffuse")
-				{
-					ss << diffuseNr++; // Transfer GLuint to stream
-				}
-				else if (name == "texture_specular")
-				{
-					ss << specularNr++; // Transfer GLuint to stream
-				}
-
-				number = ss.str();
-				// Now set the sampler to the correct texture unit
-				glUniform1i(glGetUniformLocation(shader.Program, (name + number).c_str()), i);
-				// And finally bind the texture
+				glActiveTexture(GL_TEXTURE0 + i);
 				glBindTexture(GL_TEXTURE_2D, this->textures[i].id);
+
+				const string& name = this->textures[i].type;
+				// Set both naming conventions:
+				// - "material.diffuse"  used by default.frag (Phong lighting shader)
+				// - "texture_diffuse1"  used by anim.frag and other legacy shaders
+				if (name == "texture_diffuse") {
+					glUniform1i(glGetUniformLocation(shader.Program, "material.diffuse"),  i);
+					glUniform1i(glGetUniformLocation(shader.Program, "texture_diffuse1"),  i);
+				} else if (name == "texture_specular") {
+					glUniform1i(glGetUniformLocation(shader.Program, "material.specular"), i);
+					glUniform1i(glGetUniformLocation(shader.Program, "texture_specular1"), i);
+				}
 			}
 		} else {
 			glUniform1i(glGetUniformLocation(shader.Program, "useTexture"), 0);

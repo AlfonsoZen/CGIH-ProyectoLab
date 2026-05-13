@@ -82,6 +82,7 @@ glm::vec3 posicionActualPerro(0.0f, -1.0f, 15.0f);
 glm::vec3 posImpactoPato(0.0f); 
 float rotacionPerro = 180.0f;
 bool camaraCenital = false; // false = FPS, true = cenital
+bool gameStarted   = false; // Menú de inicio
 
 // ---- Efectos de disparo ----
 float recoilTimer = 0.0f;
@@ -99,8 +100,20 @@ struct EfectoPlumas {
 EfectoPlumas efectoPlumas = { false, glm::vec3(0.0f), 0.0f, 0 };
 const float DURACION_PLUMAS = 0.6f;
 
+// ---- Sistema de rondas ----
+int   rondaActual          = 1;
+int   patosDerribadosRonda = 0; 
+int   patosEscapadosRonda  = 0; 
+// rondaEnCurso reservado para futuras fases (pausa de menú, game over, etc.)
+// Actualmente siempre true — la lógica de fin de ronda usa enPausaRonda
+float timerPausaRonda      = 0.0f;  
+bool  enPausaRonda         = false;
+float velocidadBaseRonda   = 0.6f;
+std::array<float, NUM_PATOS> angulosRecorridos = { 0.0f, 0.0f, 0.0f };
+
 // Forward declarations
 void perroReaccionarDisparo(glm::vec3 posImpacto);
+void iniciarNuevaRonda();
 
 void CursorPosCallback(GLFWwindow*, double x, double y) {
     if (mouseFirstMove) {
@@ -223,6 +236,28 @@ int main()
 
 	// Modelo del cazador (jugador visible en cenital)
 	Model Cazador((char*)"assets/models/RedDog.obj");
+
+	// --- Marcador HUD (Dígitos 3D, Barra y Logo) ---
+	Model Digito0((char*)"assets/models/Zero.glb");
+	Model Digito1((char*)"assets/models/One.glb");
+	Model Digito2((char*)"assets/models/StartGameText.002.glb"); // Dos "normal" provisional
+	Model Digito3((char*)"assets/models/Three.glb");
+	Model Digito4((char*)"assets/models/15368-mid.004.glb");
+	Model Digito5((char*)"assets/models/Five.glb");
+	Model Digito6((char*)"assets/models/15368-mid.006.glb");
+	Model Digito7((char*)"assets/models/15368-mid.005.glb"); 
+	Model Digito8((char*)"assets/models/Eight.glb");
+	Model BarDificultad((char*)"assets/models/DifficulityBar.glb");
+	Model LogoJuego((char*)"assets/models/DuckseasonLogo.glb");
+	Model StartPrompt((char*)"assets/models/Start_ENG.glb");
+	Model PerroRiendo((char*)"assets/models/perro_riendo/base_basic_shaded.glb");
+
+	// Arreglo para acceso por índice (0-8)
+	std::array<Model*, 9> digitoModels = {
+		&Digito0, &Digito1, &Digito2, &Digito3,
+		&Digito4, &Digito5, &Digito6, &Digito7,
+		&Digito8
+	};
 
 	// Efecto de plumas
 	Model Plumas1((char*)"assets/models/feathers_1.glb");
@@ -367,7 +402,7 @@ int main()
 	// ---------------------------------------------------------------
 	struct {
 		GLint projection, view, model, normalMatrix, viewPos;
-		GLint transparency, useTexture, shininess;
+		GLint transparency, useTexture, shininess, baseColor;
 		GLint dirDirection, dirAmbient, dirDiffuse, dirSpecular;
 		GLint plAmbient[4], plDiffuse[4], plSpecular[4];
 		GLint plConstant[4], plLinear[4], plQuadratic[4];
@@ -382,6 +417,7 @@ int main()
 	lu.viewPos      = glGetUniformLocation(lightingShader.Program, "viewPos");
 	lu.transparency = glGetUniformLocation(lightingShader.Program, "transparency");
 	lu.useTexture   = glGetUniformLocation(lightingShader.Program, "useTexture");
+	lu.baseColor    = glGetUniformLocation(lightingShader.Program, "baseColor");
 	lu.shininess    = glGetUniformLocation(lightingShader.Program, "material.shininess");
 	lu.dirDirection = glGetUniformLocation(lightingShader.Program, "dirLight.direction");
 	lu.dirAmbient   = glGetUniformLocation(lightingShader.Program, "dirLight.ambient");
@@ -418,6 +454,40 @@ int main()
 	hu.model      = glGetUniformLocation(hudShader.Program, "model");
 	hu.uvScale    = glGetUniformLocation(hudShader.Program, "uvScale");
 	hu.texture    = glGetUniformLocation(hudShader.Program, "ourTexture");
+
+	// Lambda para renderizar elementos en el HUD (Dígitos, Barra, Logo)
+	auto renderizarHUD3D = [&](Model* modelo, float xPos, float yPos, float escala, glm::vec3 colorHUD, float rotY = 0.0f) {
+		lightingShader.Use();
+		
+		// Forzar brillo y color
+		glUniform3f(lu.dirAmbient, 1.0f, 1.0f, 1.0f);
+		glUniform3f(lu.dirDiffuse, 0.0f, 0.0f, 0.0f);
+		glUniform3fv(lu.baseColor, 1, glm::value_ptr(colorHUD));
+		glUniform1i(lu.useTexture, 0); // Desactivar textura para forzar el color base
+		
+		glm::mat4 id = glm::mat4(1.0f);
+		glUniformMatrix3fv(lu.normalMatrix, 1, GL_FALSE, glm::value_ptr(glm::mat3(1.0f)));
+		glm::mat4 m = glm::translate(id, glm::vec3(xPos, yPos, -0.5f));
+		float ar = (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT;
+		m = glm::scale(m, glm::vec3(escala / ar, escala, escala));
+		
+		if (rotY != 0.0f)
+			m = glm::rotate(m, glm::radians(rotY), glm::vec3(0.0f, 1.0f, 0.0f));
+
+		glUniformMatrix4fv(lu.model, 1, GL_FALSE, glm::value_ptr(m));
+		glUniformMatrix4fv(lu.view,  1, GL_FALSE, glm::value_ptr(id));
+		glUniformMatrix4fv(lu.projection, 1, GL_FALSE, glm::value_ptr(id));
+		glUniform1i(lu.transparency, 1);
+		
+		glDisable(GL_CULL_FACE);
+		modelo->Draw(lightingShader);
+		glEnable(GL_CULL_FACE);
+
+		// Restaurar luz original
+		glUniform3f(lu.dirAmbient, 0.35f, 0.30f, 0.25f);
+		glUniform3f(lu.dirDiffuse, 0.85f, 0.75f, 0.60f);
+		glUniform1i(lu.useTexture, 1);
+	};
 
 	au.projection   = glGetUniformLocation(animShader.Program, "projection");
 	au.view         = glGetUniformLocation(animShader.Program, "view");
@@ -498,12 +568,12 @@ int main()
 
 		// Input
 		glfwPollEvents();
-		if (!camaraCenital) {
+		if (!camaraCenital && gameStarted) {
 			DoMovement();
 		}
 
 		// ---- Procesar disparo ----
-		if (disparoRealizado) {
+		if (disparoRealizado && gameStarted) {
 			disparoRealizado = false; // always consume — prevents ghost shots when exiting cenital mode
 
 			if (!camaraCenital) {
@@ -542,92 +612,134 @@ int main()
 			}
 		}
 
-		// ---- Actualizar posición y estado de cada pato ----
-		for (int i = 0; i < NUM_PATOS; i++) {
-			if (patos[i].estado == VOLANDO) {
-				// Avanzar en la órbita circular
-				patos[i].angulo += patos[i].velocidad * deltaTime;
-				if (patos[i].angulo > glm::two_pi<float>())
-					patos[i].angulo -= glm::two_pi<float>();
-			} else if (patos[i].estado == CAYENDO) {
-				// Caída libre con gravedad
-				patos[i].velocidadCaida -= 15.0f * deltaTime;
-				patos[i].altura += patos[i].velocidadCaida * deltaTime;
-				if (patos[i].altura <= -1.0f)
-					patos[i].estado = MUERTO;
+		if (gameStarted) {
+			// ---- Actualizar posición y estado de cada pato ----
+			for (int i = 0; i < NUM_PATOS; i++) {
+				if (patos[i].estado == VOLANDO) {
+					// Avanzar en la órbita circular
+					patos[i].angulo += patos[i].velocidad * deltaTime;
+					if (patos[i].angulo > glm::two_pi<float>())
+						patos[i].angulo -= glm::two_pi<float>();
+
+					// Detección de escape (2 vueltas completas)
+					angulosRecorridos[i] += patos[i].velocidad * deltaTime;
+					if (angulosRecorridos[i] >= glm::two_pi<float>() * 2.0f) {
+						patos[i].estado = MUERTO;
+						patosEscapadosRonda++;
+						estadoPerro = PERRO_RIENDO;
+						timerPerro = 0.0f;
+					}
+				} else if (patos[i].estado == CAYENDO) {
+					// Caída libre con gravedad
+					patos[i].velocidadCaida -= 15.0f * deltaTime;
+					patos[i].altura += patos[i].velocidadCaida * deltaTime;
+					if (patos[i].altura <= -1.0f)
+						patos[i].estado = MUERTO;
+				}
 			}
-		}
 
-		if (recoilTimer > 0.0f) recoilTimer = std::max(0.0f, recoilTimer - deltaTime);
-		if (flashTimer  > 0.0f) flashTimer  = std::max(0.0f, flashTimer  - deltaTime);
-
-		// ---- Actualizar máquina de estados del perro ----
-		timerPerro += deltaTime;
-		animTime   += deltaTime;
-
-		switch (estadoPerro) {
-			case PERRO_BUSCANDO:
-				// Mantenerse siempre a 10 unidades detrás de la cámara
-				posicionActualPerro = camera.position - (glm::normalize(glm::vec3(camera.front.x, 0.0f, camera.front.z)) * 10.0f);
-				posicionActualPerro.y = -1.0f; // Nivel del suelo
-				// Mirar en la misma dirección que el jugador para estar "de espaldas"
-				rotacionPerro = glm::degrees(atan2(camera.front.x, camera.front.z));
-				
-				articulacionPatas = sin(animTime * 8.0f) * 30.0f;
-				articulacionCola  = sin(animTime * 15.0f) * 20.0f;
-				articulacionCabeza = sin(animTime * 2.0f) * 10.0f;
-				articulacionCuerpoY = abs(sin(animTime * 8.0f)) * 0.1f;
-				break;
-
-			case PERRO_ENCONTRADO:
-				// Aparecer en el borde del claro (radio 7.5) en dirección al impacto
-				posicionActualPerro = glm::normalize(glm::vec3(posImpactoPato.x, 0.0f, posImpactoPato.z)) * 7.5f;
-				posicionActualPerro.y = -1.0f;
-				// Mirar hacia el centro del mapa (donde está el jugador)
-				rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
-
-				articulacionPatas = sin(animTime * 12.0f) * 40.0f; // Animación de correr más rápida
-				articulacionCola  = sin(animTime * 30.0f) * 40.0f;
-				articulacionCabeza = -15.0f;
-				articulacionCuerpoY = abs(sin(animTime * 12.0f)) * 0.2f;
-				
-				if (timerPerro >= 1.5f) {
-					estadoPerro = PERRO_MOSTRANDO;
-					timerPerro = 0.0f;
+			if (recoilTimer > 0.0f) recoilTimer = std::max(0.0f, recoilTimer - deltaTime);
+			if (flashTimer  > 0.0f) flashTimer  = std::max(0.0f, flashTimer  - deltaTime);
+			// ---- Detectar fin de ronda ----
+			if (!enPausaRonda) {
+				int patosResueltos = 0;
+				for (int i = 0; i < NUM_PATOS; i++) {
+					if (patos[i].estado == MUERTO) patosResueltos++;
 				}
-				break;
 
-			case PERRO_MOSTRANDO:
-				// Misma posición que ENCONTRADO
-				rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
-				articulacionPatas = 0.0f;
-				articulacionCola  = sin(animTime * 5.0f) * 10.0f;
-				articulacionCabeza = 20.0f;
-				articulacionCuerpoY = 0.0f;
-
-				if (timerPerro >= 2.0f) {
-					estadoPerro = PERRO_BUSCANDO;
-					timerPerro = 0.0f;
-					patosEnRonda = 0;
+				if (patosResueltos == NUM_PATOS) {
+					enPausaRonda    = true;
+					timerPausaRonda = 0.0f;
 				}
-				break;
+			}
 
-			case PERRO_RIENDO:
-				// El perro se ríe frente al jugador
-				posicionActualPerro = glm::normalize(glm::vec3(camera.front.x, 0.0f, camera.front.z)) * 7.5f;
-				posicionActualPerro.y = -1.0f;
-				rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
-
-				articulacionPatas = 0.0f;
-				articulacionCola  = 0.0f;
-				articulacionCabeza = sin(animTime * 25.0f) * 15.0f;
-				articulacionCuerpoY = sin(animTime * 30.0f) * 0.05f;
-				
-				if (timerPerro >= 2.0f) {
-					estadoPerro = PERRO_BUSCANDO;
-					timerPerro = 0.0f;
+			// ---- Contar pausa y lanzar nueva ronda ----
+			if (enPausaRonda) {
+				timerPausaRonda += deltaTime;
+				if (timerPausaRonda >= 3.0f) {
+					iniciarNuevaRonda();
 				}
-				break;
+			}
+
+			// ---- Actualizar máquina de estados del perro ----
+			timerPerro += deltaTime;
+			animTime   += deltaTime;
+
+			switch (estadoPerro) {
+				case PERRO_BUSCANDO:
+					// Mantenerse siempre a 10 unidades detrás de la cámara
+					posicionActualPerro = camera.position - (glm::normalize(glm::vec3(camera.front.x, 0.0f, camera.front.z)) * 10.0f);
+					posicionActualPerro.y = -1.0f; // Nivel del suelo
+					// Mirar en la misma dirección que el jugador para estar "de espaldas"
+					rotacionPerro = glm::degrees(atan2(camera.front.x, camera.front.z));
+					
+					articulacionPatas = sin(animTime * 8.0f) * 30.0f;
+					articulacionCola  = sin(animTime * 15.0f) * 20.0f;
+					articulacionCabeza = sin(animTime * 2.0f) * 10.0f;
+					articulacionCuerpoY = abs(sin(animTime * 8.0f)) * 0.1f;
+					break;
+
+				case PERRO_ENCONTRADO:
+					// Aparecer en el borde del claro (radio 7.5) en dirección al impacto
+					posicionActualPerro = glm::normalize(glm::vec3(posImpactoPato.x, 0.0f, posImpactoPato.z)) * 7.5f;
+					posicionActualPerro.y = -1.0f;
+					// Mirar hacia el centro del mapa (donde está el jugador)
+					rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
+
+					articulacionPatas = sin(animTime * 12.0f) * 40.0f; // Animación de correr más rápida
+					articulacionCola  = sin(animTime * 30.0f) * 40.0f;
+					articulacionCabeza = -15.0f;
+					articulacionCuerpoY = abs(sin(animTime * 12.0f)) * 0.2f;
+					
+					if (timerPerro >= 1.5f) {
+						estadoPerro = PERRO_MOSTRANDO;
+						timerPerro = 0.0f;
+					}
+					break;
+
+				case PERRO_MOSTRANDO:
+					// Misma posición que ENCONTRADO
+					rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
+					articulacionPatas = 0.0f;
+					articulacionCola  = sin(animTime * 5.0f) * 10.0f;
+					articulacionCabeza = 20.0f;
+					articulacionCuerpoY = 0.0f;
+
+					if (timerPerro >= 2.0f) {
+						estadoPerro = PERRO_BUSCANDO;
+						timerPerro = 0.0f;
+						patosEnRonda = 0;
+					}
+					break;
+
+				case PERRO_RIENDO:
+					// El perro se ríe frente al jugador, apareciendo desde abajo
+					posicionActualPerro = glm::normalize(glm::vec3(camera.front.x, 0.0f, camera.front.z)) * 7.5f;
+					
+					// Animación de aparecer desde abajo (0.0 a 1.0 segundos)
+					float riseProgress = glm::clamp(timerPerro, 0.0f, 1.0f);
+					float shake = sin(timerPerro * 30.0f) * 0.15f; // Sacudida rápida
+					
+					// Inicia en -3.0 y sube a -1.0 (nivel del suelo) + el shaking
+					posicionActualPerro.y = -3.0f + (riseProgress * 2.0f) + shake;
+					
+					// Rotación corregida: se le suman 180 grados para que mire hacia el jugador
+					rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z)) + 180.0f;
+
+					articulacionPatas = 0.0f;
+					articulacionCola  = 0.0f;
+					articulacionCabeza = 0.0f;
+					articulacionCuerpoY = 0.0f;
+					
+					if (timerPerro >= 3.5f) { // Un poco más de tiempo para ver la animación
+						estadoPerro = PERRO_BUSCANDO;
+						timerPerro = 0.0f;
+					}
+					break;
+			}
+		} else {
+			// Si no ha iniciado, solo consumimos disparoRealizado para evitar disparar al entrar
+			disparoRealizado = false;
 		}
 
 		// Apply accumulated mouse deltas from CursorPosCallback.
@@ -646,6 +758,8 @@ int main()
 
 		// ---- World render (lightingShader) ----
 		lightingShader.Use();
+		glUniformMatrix4fv(lu.projection, 1, GL_FALSE, glm::value_ptr(projection));
+		
 		glm::mat4 view;
 		if (camaraCenital) {
 			// Cámara cenital: posicionada arriba del mapa mirando hacia abajo
@@ -749,8 +863,15 @@ int main()
 			drawWorld(Cazador, matCazador, glm::mat3(1.0f), true, true);
 		}
 
-		// ---- Dibujar perro (Jerárquico) ----
-		{
+		// ---- Dibujar perro (Jerárquico o Modelo Único) ----
+		if (estadoPerro == PERRO_RIENDO) {
+			// Modelo único de risa
+			glm::mat4 modelRisa = glm::translate(glm::mat4(1.0f), posicionActualPerro);
+			modelRisa = glm::rotate(modelRisa, glm::radians(rotacionPerro), glm::vec3(0.0f, 1.0f, 0.0f));
+			modelRisa = glm::scale(modelRisa, glm::vec3(1.5f)); // Ajustar escala si es necesario
+			drawWorld(PerroRiendo, modelRisa, glm::mat3(1.0f), true, true);
+		} else {
+			// Perro jerárquico (BUSCANDO, ENCONTRADO, MOSTRANDO)
 			// Cuerpo (Raíz)
 			glm::mat4 modelCuerpo = glm::translate(glm::mat4(1.0f), posicionActualPerro + glm::vec3(0.0f, articulacionCuerpoY, 0.0f));
 			modelCuerpo = glm::rotate(modelCuerpo, glm::radians(rotacionPerro), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -885,6 +1006,29 @@ int main()
 			glBindVertexArray(VAO);
 			glDrawArrays(GL_TRIANGLES, 0, 6);
 			glBindVertexArray(0);
+
+			// ---- Marcador (Ronda y Puntaje) ----
+			glDisable(GL_DEPTH_TEST);
+			
+			if (gameStarted) {
+				// Ronda (Izquierda) y Puntaje (Derecha) - Amarillo NES, Escala reducida un 20%
+				renderizarHUD3D(digitoModels[glm::clamp(rondaActual, 0, 8)], -0.80f, 0.85f, 64.0f, glm::vec3(1.0f, 1.0f, 0.0f));
+				renderizarHUD3D(digitoModels[glm::clamp(patosDerribados, 0, 8)], 0.75f, 0.85f, 64.0f, glm::vec3(1.0f, 1.0f, 0.0f));
+				
+				// Barra de Dificultad (Debajo de la ronda) - Rojo Neón
+				float escalaBarra = 32.0f + (rondaActual - 1) * 4.0f;
+				renderizarHUD3D(&BarDificultad, -0.80f, 0.65f, escalaBarra, glm::vec3(1.0f, 0.2f, 0.2f));
+			} else {
+				// Logo de inicio (Elevado) - Blanco Brillante, Escala 250.0f
+				renderizarHUD3D(&LogoJuego, -0.20f, 0.25f, 250.0f, glm::vec3(1.0f, 1.0f, 1.0f));
+
+				// Mensaje de Start (Parpadeante) - Blanco
+				if (fmod(glfwGetTime(), 1.0) < 0.5) {
+					renderizarHUD3D(&StartPrompt, 0.0f, -0.35f, 80.0f, glm::vec3(1.0f, 1.0f, 1.0f));
+				}
+			}
+
+			glEnable(GL_DEPTH_TEST);
 			
 			glDisable(GL_BLEND);
 			glEnable(GL_DEPTH_TEST);
@@ -929,6 +1073,13 @@ void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mode
 	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GL_TRUE);
 
+	// Iniciar el juego al presionar ENTER o WASD
+	if (action == GLFW_PRESS) {
+		if (key == GLFW_KEY_ENTER || key == GLFW_KEY_W || key == GLFW_KEY_A || key == GLFW_KEY_S || key == GLFW_KEY_D) {
+			gameStarted = true;
+		}
+	}
+
 	if (key == GLFW_KEY_C && action == GLFW_PRESS) {
 		camaraCenital = !camaraCenital;
 	}
@@ -944,4 +1095,28 @@ void perroReaccionarDisparo(glm::vec3 posImpacto) {
 	timerPerro  = 0.0f;
 	posImpactoPato = posImpacto;
 	patosEnRonda++;
+	patosDerribadosRonda++;
+}
+
+void iniciarNuevaRonda() {
+	rondaActual++;
+	patosDerribadosRonda = 0;
+	patosEscapadosRonda  = 0;
+	enPausaRonda         = false;
+	timerPausaRonda      = 0.0f;
+
+	velocidadBaseRonda = glm::min(0.6f + (rondaActual - 1) * 0.15f, 1.5f);
+
+	for (int i = 0; i < NUM_PATOS; i++) {
+		patos[i].angulo         = glm::radians(120.0f * i);
+		patos[i].velocidad      = velocidadBaseRonda + i * 0.05f;
+		patos[i].altura         = ALTURA_VUELO + i * 0.5f;
+		patos[i].estado         = VOLANDO;
+		patos[i].velocidadCaida = 0.0f;
+		angulosRecorridos[i]    = 0.0f;
+	}
+
+	estadoPerro   = PERRO_BUSCANDO;
+	timerPerro    = 0.0f;
+	patosEnRonda  = 0;
 }

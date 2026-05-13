@@ -21,6 +21,7 @@
 using namespace std;
 
 GLint TextureFromFile(const char *path, string directory);
+GLint TextureFromEmbedded(const aiTexture* tex);
 
 class Model
 {
@@ -48,5 +49,5 @@ private:
     Mesh processMesh(aiMesh *mesh, const aiScene *scene);
 
     // Checks all material textures of a given type and loads the textures if they're not loaded yet.
-    vector<Texture> loadMaterialTextures(aiMaterial *mat, aiTextureType type, string typeName);
+    vector<Texture> loadMaterialTextures(aiMaterial *mat, aiTextureType type, string typeName, const aiScene* scene);
 };
