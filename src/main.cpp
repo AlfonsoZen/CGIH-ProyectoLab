@@ -83,6 +83,12 @@ glm::vec3 posImpactoPato(0.0f);
 float rotacionPerro = 180.0f;
 bool camaraCenital = false; // false = FPS, true = cenital
 
+// ---- Efectos de disparo ----
+float recoilTimer = 0.0f;
+float flashTimer  = 0.0f;
+const float RECOIL_DURATION = 0.15f;
+const float FLASH_DURATION  = 0.08f;
+
 // ---- Efecto de plumas ----
 struct EfectoPlumas {
 	bool activo;
@@ -298,6 +304,57 @@ int main()
 	}
 	glBindTexture(GL_TEXTURE_2D, 0);
 
+	// --- Flash texture: 16x16 radial gradient, orange-white center ---
+	GLuint flashTexture;
+	{
+		const int SZ = 16;
+		unsigned char data[SZ * SZ * 4];
+		for (int y = 0; y < SZ; y++) {
+			for (int x = 0; x < SZ; x++) {
+				float dx   = (x - SZ * 0.5f + 0.5f) / (SZ * 0.5f);
+				float dy   = (y - SZ * 0.5f + 0.5f) / (SZ * 0.5f);
+				float dist = sqrtf(dx*dx + dy*dy);
+				float a    = std::max(0.0f, 1.0f - dist);
+				a = a * a; // sharpen falloff
+				int i = (y * SZ + x) * 4;
+				data[i+0] = 255;
+				data[i+1] = (unsigned char)(120 + 135 * a); // orange→white center
+				data[i+2] = (unsigned char)(20  +  80 * a);
+				data[i+3] = (unsigned char)(255 * a);
+			}
+		}
+		glGenTextures(1, &flashTexture);
+		glBindTexture(GL_TEXTURE_2D, flashTexture);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SZ, SZ, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+
+	// --- Flash quad VAO (unit square, z=0, transformed via model matrix) ---
+	GLuint flashVAO, flashVBO;
+	{
+		float q[] = {
+			-0.5f,  0.5f, 0.0f,  0.0f, 1.0f,
+			-0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
+			 0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
+			-0.5f,  0.5f, 0.0f,  0.0f, 1.0f,
+			 0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
+			 0.5f,  0.5f, 0.0f,  1.0f, 1.0f,
+		};
+		glGenVertexArrays(1, &flashVAO);
+		glGenBuffers(1, &flashVBO);
+		glBindVertexArray(flashVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, flashVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(q), q, GL_STATIC_DRAW);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+		glEnableVertexAttribArray(2);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+	}
+
 	glm::mat4 projection = glm::perspective(
 		glm::radians(camera.GetZoom()),
 		(float)SCREEN_WIDTH / (float)SCREEN_HEIGHT,
@@ -450,6 +507,9 @@ int main()
 			disparoRealizado = false; // always consume — prevents ghost shots when exiting cenital mode
 
 			if (!camaraCenital) {
+				recoilTimer = RECOIL_DURATION; // kick on every shot
+				flashTimer  = FLASH_DURATION;
+
 				glm::vec3 origenRayo    = camera.position;
 				glm::vec3 direccionRayo = glm::normalize(camera.front);
 				const float ANGULO_MAXIMO_IMPACTO = glm::radians(5.0f);
@@ -497,6 +557,9 @@ int main()
 					patos[i].estado = MUERTO;
 			}
 		}
+
+		if (recoilTimer > 0.0f) recoilTimer = std::max(0.0f, recoilTimer - deltaTime);
+		if (flashTimer  > 0.0f) flashTimer  = std::max(0.0f, flashTimer  - deltaTime);
 
 		// ---- Actualizar máquina de estados del perro ----
 		timerPerro += deltaTime;
@@ -755,12 +818,53 @@ int main()
 			glUniformMatrix4fv(hu.projection, 1, GL_FALSE, glm::value_ptr(projection));
 			glUniformMatrix4fv(hu.view,       1, GL_FALSE, glm::value_ptr(hudView));
 
-			glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, -0.8f, -1.0f));
+			// Recoil: quadratic ease-out (sharp kick, smooth return)
+			float recoilT = recoilTimer / RECOIL_DURATION;
+			float recoil  = recoilT * recoilT;
+
+			glm::mat4 model = glm::translate(glm::mat4(1.0f),
+				glm::vec3(0.5f, -0.8f - recoil * 0.04f, -1.0f + recoil * 0.1f));
 			model = glm::rotate(model, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+			model = glm::rotate(model, glm::radians(recoil * 12.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 			model = glm::scale(model, glm::vec3(0.3f));
 			glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(model));
 			glUniform1f(hu.uvScale, 1.0f);
 			Gun.Draw(hudShader);
+
+			// Muzzle flash — additive blending, two layers (outer glow + inner core)
+			if (flashTimer > 0.0f) {
+				float t  = flashTimer / FLASH_DURATION; // 1→0
+				float ar = (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT;
+
+				glDisable(GL_DEPTH_TEST);
+				glEnable(GL_BLEND);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE); // additive: brightens whatever is behind
+
+				glActiveTexture(GL_TEXTURE0);
+				glBindTexture(GL_TEXTURE_2D, flashTexture);
+				glUniform1i(hu.texture, 0);
+
+				// Barrel tip position in view space (adjust x/y if it looks off)
+				const glm::vec3 BARREL_POS(0.5f, -0.68f, -1.0f);
+				glm::vec3 barrelPos = BARREL_POS + glm::vec3(0.0f, -recoil * 0.04f, recoil * 0.1f);
+
+				// Two layers: outer (large, dim) and inner (small, bright)
+				const float sizes[2]     = { t * 0.14f, t * 0.07f };
+				const float rotSpeeds[2] = { 47.0f, 73.0f };
+
+				for (int layer = 0; layer < 2; layer++) {
+					float angle = (float)glfwGetTime() * rotSpeeds[layer];
+					glm::mat4 mFlash = glm::translate(glm::mat4(1.0f), barrelPos);
+					mFlash = glm::rotate(mFlash, angle, glm::vec3(0.0f, 0.0f, 1.0f));
+					mFlash = glm::scale(mFlash, glm::vec3(sizes[layer] / ar, sizes[layer], 1.0f));
+					glUniformMatrix4fv(hu.model, 1, GL_FALSE, glm::value_ptr(mFlash));
+					glBindVertexArray(flashVAO);
+					glDrawArrays(GL_TRIANGLES, 0, 6);
+				}
+
+				glBindVertexArray(0);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); // restore for crosshair
+			}
 
 			// Crosshair (screen-space quad)
 			glDisable(GL_DEPTH_TEST);
