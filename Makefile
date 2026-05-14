@@ -7,7 +7,13 @@ CXXFLAGS = -std=c++17 -Wall -DGLEW_STATIC -fpermissive \
            -Ilib/SOIL2 \
            -Ilib
 
-LDFLAGS = -lGL -lglfw -lGLEW -lassimp -lz
+ifeq ($(OS),Windows_NT)
+    LDFLAGS = -lglfw3 -lglew32 -lassimp -lz -lopengl32 -lgdi32
+    EXEC = duck_hunt_3d.exe
+else
+    LDFLAGS = -lGL -lglfw -lGLEW -lassimp -lz
+    EXEC = duck_hunt_3d
+endif
 
 # Source files
 SRC_DIR = src
@@ -16,8 +22,6 @@ SRC = $(SRC_DIR)/main.cpp $(SRC_DIR)/shader.cpp $(SRC_DIR)/camera.cpp $(SRC_DIR)
 # SOIL2 source files
 SOIL_DIR = lib/SOIL2
 SOIL_SRC = $(SOIL_DIR)/etc1_utils.c $(SOIL_DIR)/image_DXT.c $(SOIL_DIR)/image_helper.c $(SOIL_DIR)/SOIL2.c
-
-EXEC = duck_hunt_3d
 
 .PHONY: all clean run
 

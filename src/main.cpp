@@ -122,20 +122,12 @@ bool disparoRealizado = false;
 // =============================================================================
 //   SISTEMA DEL PERRO — máquina de estados
 // =============================================================================
-enum EstadoPerro { PERRO_BUSCANDO, PERRO_ENCONTRADO, PERRO_MOSTRANDO, PERRO_RIENDO };
-EstadoPerro estadoPerro = PERRO_BUSCANDO;
+enum EstadoPerro { PERRO_IDLE, PERRO_MOSTRANDO, PERRO_RIENDO };
+EstadoPerro estadoPerro = PERRO_IDLE;
 float timerPerro        = 0.0f;
-float animTime          = 0.0f;
 int   patosEnRonda      = 0;
 
-// Articulaciones del perro jerárquico (BUSCANDO y ENCONTRADO)
-float articulacionPatas    = 0.0f;
-float articulacionCola     = 0.0f;
-float articulacionCabeza   = 0.0f;
-float articulacionCuerpoY  = 0.0f;
-
 glm::vec3 posicionActualPerro(0.0f, PLAYER_HEIGHT - 1.0f, 15.0f);
-glm::vec3 posImpactoPato(0.0f);
 float rotacionPerro = 180.0f;
 
 // --- Constantes para la animación pop-up del perro con patos (MOSTRANDO) ---
@@ -349,15 +341,6 @@ int main()
     // ---- Modelos del juego (nuestros — OBJ/GLB) ----
     Model Skybox ((char*)"assets/models/Skybox.obj");
     Model Gun    ((char*)"assets/models/zapper.obj");
-
-    // Perro jerárquico (partes separadas para animación de articulaciones)
-    Model DogBody ((char*)"assets/models/dog/DogBody.obj");
-    Model DogHead ((char*)"assets/models/dog/HeadDog.obj");
-    Model DogTail ((char*)"assets/models/dog/TailDog.obj");
-    Model DogLegFL((char*)"assets/models/dog/F_LeftLegDog.obj");
-    Model DogLegFR((char*)"assets/models/dog/F_RightLegDog.obj");
-    Model DogLegBL((char*)"assets/models/dog/B_LeftLegDog.obj");
-    Model DogLegBR((char*)"assets/models/dog/B_RightLegDog.obj");
 
     // Cazador visible en la cámara cenital
     Model Cazador((char*)"assets/models/RedDog.obj");
@@ -789,43 +772,14 @@ int main()
 
             // ---- Máquina de estados del perro ----
             timerPerro += deltaTime;
-            animTime   += deltaTime;
 
             switch (estadoPerro) {
-                case PERRO_BUSCANDO:
-                    // El perro camina detrás del jugador, fuera del ángulo de visión.
-                    posicionActualPerro = camera.position
-                        - glm::normalize(glm::vec3(camera.front.x, 0.0f, camera.front.z)) * 15.0f;
-                    posicionActualPerro.y = groundHeight - 1.0f;
-                    rotacionPerro = glm::degrees(atan2(camera.front.x, camera.front.z));
-                    articulacionPatas    = sin(animTime *  8.0f) * 30.0f;
-                    articulacionCola     = sin(animTime * 15.0f) * 20.0f;
-                    articulacionCabeza   = sin(animTime *  2.0f) * 10.0f;
-                    articulacionCuerpoY  = fabs(sin(animTime * 8.0f)) * 0.1f;
-                    break;
-
-                case PERRO_ENCONTRADO:
-                    // El perro corre hacia donde cayó el pato.
-                    posicionActualPerro = glm::normalize(glm::vec3(posImpactoPato.x, 0.0f, posImpactoPato.z)) * 60.0f;
-                    posicionActualPerro.y = groundHeight - 1.0f;
-                    rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
-                    articulacionPatas    = sin(animTime * 12.0f) * 40.0f;
-                    articulacionCola     = sin(animTime * 30.0f) * 40.0f;
-                    articulacionCabeza   = -15.0f;
-                    articulacionCuerpoY  = fabs(sin(animTime * 12.0f)) * 0.2f;
-                    if (timerPerro >= 1.5f) { estadoPerro = PERRO_MOSTRANDO; timerPerro = 0.0f; }
+                case PERRO_IDLE:
                     break;
 
                 case PERRO_MOSTRANDO:
-                    // El perro con patos aparece animado (RISE/HOLD/FALL).
-                    // La duración total es DOG_TOTAL_TIME = 3.0 s.
-                    rotacionPerro = glm::degrees(atan2(posicionActualPerro.x, posicionActualPerro.z));
-                    articulacionPatas   = 0.0f;
-                    articulacionCola    = sin(animTime * 5.0f) * 10.0f;
-                    articulacionCabeza  = 20.0f;
-                    articulacionCuerpoY = 0.0f;
                     if (timerPerro >= DOG_TOTAL_TIME) {
-                        estadoPerro  = PERRO_BUSCANDO;
+                        estadoPerro  = PERRO_IDLE;
                         timerPerro   = 0.0f;
                         patosEnRonda = 0;
                     }
@@ -833,13 +787,12 @@ int main()
 
                 case PERRO_RIENDO: {
                     glm::vec3 dir = glm::normalize(glm::vec3(camera.front.x, 0.0f, camera.front.z));
-                    posicionActualPerro = camera.position + dir * 60.0f;
+                    posicionActualPerro = camera.position + dir * 68.0f;
                     float riseP = glm::clamp(timerPerro, 0.0f, 1.0f);
                     float shake = sinf(timerPerro * 30.0f) * 0.15f;
-                    posicionActualPerro.y = groundHeight - 10.0f + riseP * 2.0f + shake;
+                    posicionActualPerro.y = groundHeight - 13.0f + riseP * 2.0f + shake;
                     rotacionPerro = glm::degrees(atan2(dir.x, dir.z)) + 180.0f;
-                    articulacionPatas = articulacionCola = articulacionCabeza = articulacionCuerpoY = 0.0f;
-                    if (timerPerro >= 3.5f) { estadoPerro = PERRO_BUSCANDO; timerPerro = 0.0f; }
+                    if (timerPerro >= 3.5f) { estadoPerro = PERRO_IDLE; timerPerro = 0.0f; }
                     break;
                 }
             }
@@ -1001,47 +954,6 @@ int main()
             drawWorld(Cazador, matCaz, glm::mat3(1.0f), true, true);
         }
 
-        // ---- Perro jerárquico (BUSCANDO y ENCONTRADO) ----
-        if (estadoPerro != PERRO_MOSTRANDO && estadoPerro != PERRO_RIENDO) {
-            // Escala del perro ajustada al nuevo mundo (modelo OBJ pequeño en escena grande).
-            // Ajustar visualmente si el perro se ve muy grande o pequeño.
-            const float DOG_SCALE = 15.0f;
-            glm::mat4 modelCuerpo = glm::translate(glm::mat4(1.0f),
-                posicionActualPerro + glm::vec3(0.0f, articulacionCuerpoY, 0.0f));
-            modelCuerpo = glm::rotate(modelCuerpo, glm::radians(rotacionPerro), glm::vec3(0.0f, 1.0f, 0.0f));
-            modelCuerpo = glm::scale(modelCuerpo, glm::vec3(DOG_SCALE));
-            drawWorld(DogBody, modelCuerpo, glm::mat3(1.0f), true, true);
-
-            glm::mat4 modelCabeza = modelCuerpo;
-            modelCabeza = glm::translate(modelCabeza, glm::vec3(0.0f, 0.093f, 0.208f));
-            modelCabeza = glm::rotate(modelCabeza, glm::radians(articulacionCabeza), glm::vec3(1.0f, 0.0f, 0.0f));
-            drawWorld(DogHead, modelCabeza, glm::mat3(1.0f), true, true);
-
-            glm::mat4 modelCola = modelCuerpo;
-            modelCola = glm::translate(modelCola, glm::vec3(0.0f, 0.026f, -0.288f));
-            modelCola = glm::rotate(modelCola, glm::radians(articulacionCola), glm::vec3(0.0f, 1.0f, 0.0f));
-            drawWorld(DogTail, modelCola, glm::mat3(1.0f), true, true);
-
-            glm::mat4 modelFL = modelCuerpo;
-            modelFL = glm::translate(modelFL, glm::vec3( 0.112f, -0.044f, 0.074f));
-            modelFL = glm::rotate(modelFL, glm::radians( articulacionPatas), glm::vec3(1.0f, 0.0f, 0.0f));
-            drawWorld(DogLegFL, modelFL, glm::mat3(1.0f), true, true);
-
-            glm::mat4 modelFR = modelCuerpo;
-            modelFR = glm::translate(modelFR, glm::vec3(-0.111f, -0.055f, 0.074f));
-            modelFR = glm::rotate(modelFR, glm::radians(-articulacionPatas), glm::vec3(1.0f, 0.0f, 0.0f));
-            drawWorld(DogLegFR, modelFR, glm::mat3(1.0f), true, true);
-
-            glm::mat4 modelBL = modelCuerpo;
-            modelBL = glm::translate(modelBL, glm::vec3( 0.082f, -0.046f,-0.218f));
-            modelBL = glm::rotate(modelBL, glm::radians(-articulacionPatas), glm::vec3(1.0f, 0.0f, 0.0f));
-            drawWorld(DogLegBL, modelBL, glm::mat3(1.0f), true, true);
-
-            glm::mat4 modelBR = modelCuerpo;
-            modelBR = glm::translate(modelBR, glm::vec3(-0.083f, -0.057f,-0.231f));
-            modelBR = glm::rotate(modelBR, glm::radians( articulacionPatas), glm::vec3(1.0f, 0.0f, 0.0f));
-            drawWorld(DogLegBR, modelBR, glm::mat3(1.0f), true, true);
-        }
 
         // ---- Perro riendo (RIENDO) ----
         if (estadoPerro == PERRO_RIENDO) {
@@ -1235,10 +1147,9 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mode
 // =============================================================================
 //   LÓGICA DEL JUEGO
 // =============================================================================
-void perroReaccionarDisparo(glm::vec3 posImpacto) {
-    estadoPerro    = PERRO_ENCONTRADO;
+void perroReaccionarDisparo(glm::vec3 /*posImpacto*/) {
+    estadoPerro    = PERRO_MOSTRANDO;
     timerPerro     = 0.0f;
-    posImpactoPato = posImpacto;
     patosEnRonda++;
     patosDerribadosRonda++;
 }
@@ -1261,7 +1172,7 @@ void iniciarNuevaRonda() {
         angulosRecorridos[i]    = 0.0f;
     }
 
-    estadoPerro  = PERRO_BUSCANDO;
+    estadoPerro  = PERRO_IDLE;
     timerPerro   = 0.0f;
     patosEnRonda = 0;
 }
