@@ -23,7 +23,9 @@ EXEC = duck_hunt_3d
 
 all: $(EXEC)
 
-$(EXEC): $(SRC) $(SOIL_SRC)
+HEADERS = $(wildcard include/*.h)
+
+$(EXEC): $(SRC) $(SOIL_SRC) $(HEADERS)
 	$(CXX) $(CXXFLAGS) -o $(EXEC) $(SRC) $(SOIL_SRC) $(LDFLAGS)
 
 run: $(EXEC)
