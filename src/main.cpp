@@ -365,12 +365,12 @@ int main()
     // Marcador HUD: dígitos 3D, barra de dificultad, logo y prompt de inicio
     Model Digito0((char*)"assets/models/Zero.glb");
     Model Digito1((char*)"assets/models/One.glb");
-    Model Digito2((char*)"assets/models/StartGameText.002.glb");
+    Model Digito2((char*)"assets/models/Two.glb");
     Model Digito3((char*)"assets/models/Three.glb");
-    Model Digito4((char*)"assets/models/15368-mid.004.glb");
+    Model Digito4((char*)"assets/models/Four.glb");
     Model Digito5((char*)"assets/models/Five.glb");
-    Model Digito6((char*)"assets/models/15368-mid.006.glb");
-    Model Digito7((char*)"assets/models/15368-mid.005.glb");
+    Model Digito6((char*)"assets/models/Six.glb");
+    Model Digito7((char*)"assets/models/Seven.glb");
     Model Digito8((char*)"assets/models/Eight.glb");
     Model BarDificultad((char*)"assets/models/DifficulityBar.glb");
     Model LogoJuego    ((char*)"assets/models/DuckseasonLogo.glb");
@@ -676,7 +676,7 @@ int main()
         glfwPollEvents();
         if (!camaraCenital && gameStarted) DoMovement();
 
-        // ---- Límite circular del mapa y colisiones AABB con sliding ----
+        // ---- Límite circular del mapa y colisiones AAUSCNADOB con sliding ----
         {
             glm::vec3 camPos = camera.position;
             float distXZ = sqrtf(camPos.x * camPos.x + camPos.z * camPos.z);
@@ -1145,7 +1145,14 @@ int main()
             glDisable(GL_DEPTH_TEST);
             if (gameStarted) {
                 renderizarHUD3D(digitoModels[glm::clamp(rondaActual,     0, 8)], -0.80f, 0.85f, 64.0f, glm::vec3(1.0f, 1.0f, 0.0f));
-                renderizarHUD3D(digitoModels[glm::clamp(patosDerribados, 0, 8)],  0.75f, 0.85f, 64.0f, glm::vec3(1.0f, 1.0f, 0.0f));
+                
+                int decenas  = (patosDerribadosRonda / 10) % 10;
+                int unidades = patosDerribadosRonda % 10;
+                
+                // Se dibujan las decenas a la izquierda y las unidades a la derecha
+                renderizarHUD3D(digitoModels[decenas],  0.68f, 0.85f, 64.0f, glm::vec3(1.0f, 1.0f, 0.0f));
+                renderizarHUD3D(digitoModels[unidades], 0.76f, 0.85f, 64.0f, glm::vec3(1.0f, 1.0f, 0.0f));
+                
                 float escalaBarra = 32.0f + (rondaActual - 1) * 4.0f;
                 renderizarHUD3D(&BarDificultad, -0.80f, 0.65f, escalaBarra, glm::vec3(1.0f, 0.2f, 0.2f));
             } else {
